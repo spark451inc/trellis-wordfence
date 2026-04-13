@@ -2,9 +2,6 @@
 # Wordfence CLI version to install
 wordfence_version: "5.0.3"
 
-# Installation method: 'pip' (recommended) or 'deb' (Debian/Ubuntu package)
-wordfence_install_method: "pip"
-
 # Wordfence CLI license key (required — store this in Ansible Vault)
 # vault_wordfence_license: ""
 wordfence_license: "{{ vault_wordfence_license | default('') }}"

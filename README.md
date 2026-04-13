@@ -7,7 +7,7 @@ An Ansible role that installs, configures, and schedules [Wordfence CLI](https:/
 
 ## Features
 
-- Installs Wordfence CLI via `pip` (default) or the official `.deb` package
+- Installs Wordfence CLI via `pip`
 - Writes a system-wide configuration file at `/etc/wordfence/wordfence-cli.ini`
 - Schedules daily **malware scans** and **vulnerability scans** via cron with flock to prevent overlapping jobs
 - Outputs scan results as CSV (configurable) to `/var/log/wordfence/`
@@ -47,9 +47,6 @@ Add any overrides to `group_vars/production/wordfence.yml` (or `group_vars/all/w
 ```yaml
 # License is pulled from vault automatically:
 wordfence_license: "{{ vault_wordfence_license }}"
-
-# Installation method: 'pip' (default) or 'deb'
-wordfence_install_method: pip
 
 # Paths to scan — defaults to Trellis www_root (/srv/www)
 wordfence_malware_scan_paths:
@@ -96,7 +93,6 @@ All variables have sensible defaults defined in [`roles/wordfence/defaults/main.
 | Variable | Default | Description |
 |---|---|---|
 | `wordfence_version` | `5.0.3` | Wordfence CLI version to install |
-| `wordfence_install_method` | `pip` | Installation method: `pip` or `deb` |
 | `wordfence_license` | `""` | License key (use vault) |
 | `wordfence_user` | `root` | System user that runs scans |
 | `wordfence_bin` | `/usr/local/bin/wordfence` | Path to the wordfence executable |
