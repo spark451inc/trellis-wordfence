@@ -1,0 +1,44 @@
+---
+- name: Ensure Python 3 and pip are installed
+  apt:
+    name:
+      - python3
+      - python3-pip
+      - libpcre3
+    state: present
+    cache_valid_time: "{{ apt_cache_valid_time | default(3600) }}"
+
+- name: Install Wordfence CLI via pip
+  pip:
+    name: "wordfence=={{ wordfence_version }}"
+    state: present
+    executable: pip3
+  when: wordfence_install_method == 'pip'
+
+- name: Download Wordfence CLI deb package
+  get_url:
+    url: "https://github.com/wordfence/wordfence-cli/releases/download/v{{ wordfence_version }}/wordfence.deb"
+    dest: "/tmp/wordfence_{{ wordfence_version }}.deb"
+    mode: '0644'
+  when: wordfence_install_method == 'deb'
+
+- name: Install Wordfence CLI deb package
+  apt:
+    deb: "/tmp/wordfence_{{ wordfence_version }}.deb"
+    state: present
+  when: wordfence_install_method == 'deb'
+
+- name: Remove downloaded deb package
+  file:
+    path: "/tmp/wordfence_{{ wordfence_version }}.deb"
+    state: absent
+  when: wordfence_install_method == 'deb'
+
+- name: Verify Wordfence CLI installation
+  command: "{{ wordfence_bin }} version"
+  changed_when: false
+  register: wordfence_version_check
+
+- name: Show installed Wordfence CLI version
+  debug:
+    msg: "{{ wordfence_version_check.stdout }}"

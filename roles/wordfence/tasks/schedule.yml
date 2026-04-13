@@ -1,0 +1,38 @@
+---
+- name: Schedule Wordfence CLI malware scan
+  cron:
+    name: "Wordfence CLI malware scan"
+    user: "{{ wordfence_user }}"
+    minute: "{{ wordfence_malware_scan_cron_minute }}"
+    hour: "{{ wordfence_malware_scan_cron_hour }}"
+    day: "{{ wordfence_malware_scan_cron_day }}"
+    month: "{{ wordfence_malware_scan_cron_month }}"
+    weekday: "{{ wordfence_malware_scan_cron_weekday }}"
+    job: >-
+      /usr/bin/flock -w 0 {{ wordfence_lock_dir }}/malware-scan.lock
+      {{ wordfence_bin }} malware-scan
+      --configuration {{ wordfence_config_file }}
+      --no-banner
+      --no-color
+      {{ wordfence_malware_scan_paths | join(' ') }}
+      >> {{ wordfence_log_dir }}/malware-scan.log 2>&1
+    state: "{{ wordfence_malware_scan_enabled | ternary('present', 'absent') }}"
+
+- name: Schedule Wordfence CLI vulnerability scan
+  cron:
+    name: "Wordfence CLI vulnerability scan"
+    user: "{{ wordfence_user }}"
+    minute: "{{ wordfence_vuln_scan_cron_minute }}"
+    hour: "{{ wordfence_vuln_scan_cron_hour }}"
+    day: "{{ wordfence_vuln_scan_cron_day }}"
+    month: "{{ wordfence_vuln_scan_cron_month }}"
+    weekday: "{{ wordfence_vuln_scan_cron_weekday }}"
+    job: >-
+      /usr/bin/flock -w 0 {{ wordfence_lock_dir }}/vuln-scan.lock
+      {{ wordfence_bin }} vuln-scan
+      --configuration {{ wordfence_config_file }}
+      --no-banner
+      --no-color
+      {{ wordfence_vuln_scan_paths | join(' ') }}
+      >> {{ wordfence_log_dir }}/vuln-scan.log 2>&1
+    state: "{{ wordfence_vuln_scan_enabled | ternary('present', 'absent') }}"

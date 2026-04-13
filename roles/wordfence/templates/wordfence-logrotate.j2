@@ -1,0 +1,10 @@
+{{ wordfence_log_dir }}/*.log
+{{ wordfence_log_dir }}/*.csv {
+    daily
+    missingok
+    rotate {{ wordfence_logrotate_rotate }}
+    compress
+    delaycompress
+    notifempty
+    copytruncate
+}
