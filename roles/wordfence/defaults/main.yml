@@ -9,7 +9,7 @@ wordfence_license: "{{ vault_wordfence_license | default('') }}"
 # System user that owns the Wordfence configuration and runs scheduled scans
 wordfence_user: root
 
-# Path to the Wordfence CLI executable (pip as root installs here)
+# Path to the Wordfence CLI executable
 wordfence_bin: /usr/local/bin/wordfence
 
 # Configuration directory and file

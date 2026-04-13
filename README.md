@@ -7,7 +7,7 @@ An Ansible role that installs, configures, and schedules [Wordfence CLI](https:/
 
 ## Features
 
-- Installs Wordfence CLI via `pip`
+- Installs Wordfence CLI from the precompiled binary (no Python/pip required)
 - Writes a system-wide configuration file at `/etc/wordfence/wordfence-cli.ini`
 - Schedules daily **malware scans** and **vulnerability scans** via cron with flock to prevent overlapping jobs
 - Outputs scan results as CSV (configurable) to `/var/log/wordfence/`
