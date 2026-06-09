@@ -7,16 +7,15 @@ galaxy_info:
     Trellis-managed WordPress server
   company: Spark451
 
-  license: MIT
+  license: GPL-2.0
 
   min_ansible_version: "2.10"
 
   platforms:
     - name: Ubuntu
       versions:
-        - focal
-        - jammy
         - noble
+        - plucky
 
   galaxy_tags:
     - wordpress
