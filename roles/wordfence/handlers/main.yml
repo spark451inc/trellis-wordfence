@@ -1,0 +1,3 @@
+---
+# No service handlers are needed for this role since Wordfence CLI is
+# invoked on-demand via cron jobs rather than running as a daemon.

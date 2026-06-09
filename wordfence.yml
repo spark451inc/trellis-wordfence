@@ -1,0 +1,17 @@
+---
+# Wordfence CLI setup playbook for Trellis-managed WordPress servers.
+#
+# Usage:
+#   ansible-playbook wordfence.yml -e env=production
+#
+# To run only specific tasks use tags:
+#   ansible-playbook wordfence.yml -e env=production --tags wordfence-install
+#   ansible-playbook wordfence.yml -e env=production --tags wordfence-configure
+#   ansible-playbook wordfence.yml -e env=production --tags wordfence-schedule
+
+- name: Install and configure Wordfence CLI
+  hosts: web:&{{ env | default('production') }}
+  become: true
+
+  roles:
+    - {role: wordfence, tags: [wordfence]}

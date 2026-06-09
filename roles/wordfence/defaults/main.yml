@@ -1,0 +1,110 @@
+---
+# Wordfence CLI version to install
+wordfence_version: "5.0.3"
+
+# Wordfence CLI license key (required — store this in Ansible Vault)
+# vault_wordfence_license: ""
+wordfence_license: "{{ vault_wordfence_license | default('') }}"
+
+# System user that owns the Wordfence configuration and runs scheduled scans
+wordfence_user: root
+
+# Path to the Wordfence CLI executable
+wordfence_bin: /usr/local/bin/wordfence
+
+# Configuration directory and file
+wordfence_config_dir: /etc/wordfence
+wordfence_config_file: "{{ wordfence_config_dir }}/wordfence-cli.ini"
+
+# Cache directory used by Wordfence CLI
+wordfence_cache_dir: /var/cache/wordfence
+
+# Lock directory for flock (owned by wordfence_user, not world-writable /tmp)
+wordfence_lock_dir: /var/lock/wordfence
+
+# Log directory for scan output
+wordfence_log_dir: /var/log/wordfence
+
+# -----------------------------------------------------------------------
+# Malware scan settings
+# -----------------------------------------------------------------------
+
+# Enable the scheduled malware scan cron job
+wordfence_malware_scan_enabled: true
+
+# Path(s) to scan for malware. Defaults to the Trellis www_root.
+wordfence_malware_scan_paths:
+  - "{{ www_root | default('/srv/www') }}"
+
+# Cron schedule for the malware scan (default: daily at 02:00)
+wordfence_malware_scan_cron_minute: "0"
+wordfence_malware_scan_cron_hour: "2"
+wordfence_malware_scan_cron_day: "*"
+wordfence_malware_scan_cron_month: "*"
+wordfence_malware_scan_cron_weekday: "*"
+
+# Output format for malware scan results: 'csv', 'json', or 'human'
+wordfence_malware_scan_output_format: csv
+
+# Path to write malware scan results
+wordfence_malware_scan_output_path: "{{ wordfence_log_dir }}/malware-scan.csv"
+
+# -----------------------------------------------------------------------
+# Vulnerability scan settings
+# -----------------------------------------------------------------------
+
+# Enable the scheduled vulnerability scan cron job
+wordfence_vuln_scan_enabled: true
+
+# Path(s) to scan for vulnerabilities. Defaults to the Trellis www_root.
+wordfence_vuln_scan_paths:
+  - "{{ www_root | default('/srv/www') }}"
+
+# Cron schedule for the vulnerability scan (default: daily at 03:00)
+wordfence_vuln_scan_cron_minute: "0"
+wordfence_vuln_scan_cron_hour: "3"
+wordfence_vuln_scan_cron_day: "*"
+wordfence_vuln_scan_cron_month: "*"
+wordfence_vuln_scan_cron_weekday: "*"
+
+# Output format for vulnerability scan results: 'csv', 'json', or 'human'
+wordfence_vuln_scan_output_format: csv
+
+# Path to write vulnerability scan results
+wordfence_vuln_scan_output_path: "{{ wordfence_log_dir }}/vuln-scan.csv"
+
+# -----------------------------------------------------------------------
+# Email reporting
+# -----------------------------------------------------------------------
+
+# Email address(es) to send scan reports to (leave empty to disable)
+wordfence_email: ""
+
+# From address for email reports
+wordfence_email_from: ""
+
+# SMTP server hostname (leave empty to use sendmail)
+wordfence_smtp_host: ""
+
+# SMTP server port
+wordfence_smtp_port: 587
+
+# SMTP TLS mode: 'none', 'smtps', or 'starttls'
+wordfence_smtp_tls_mode: "starttls"
+
+# SMTP username
+wordfence_smtp_user: ""
+
+# SMTP password (store in Ansible Vault as vault_wordfence_smtp_password)
+# vault_wordfence_smtp_password: ""
+wordfence_smtp_password: "{{ vault_wordfence_smtp_password | default('') }}"
+
+# -----------------------------------------------------------------------
+# Logrotate
+# -----------------------------------------------------------------------
+
+# Enable logrotate configuration for Wordfence log files
+wordfence_logrotate_enabled: true
+
+# Number of days/rotations to retain log files
+wordfence_logrotate_rotate: 14
