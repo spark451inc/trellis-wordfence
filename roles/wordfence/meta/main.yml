@@ -2,7 +2,9 @@
 galaxy_info:
   role_name: wordfence
   author: spark451inc
-  description: Install, configure, and schedule Wordfence CLI scans on a Trellis-managed WordPress server
+  description: >-
+    Install, configure, and schedule Wordfence CLI scans on a
+    Trellis-managed WordPress server
   company: Spark451
 
   license: MIT

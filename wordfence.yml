@@ -11,7 +11,7 @@
 
 - name: Install and configure Wordfence CLI
   hosts: web:&{{ env | default('production') }}
-  become: yes
+  become: true
 
   roles:
-    - { role: wordfence, tags: [wordfence] }
+    - {role: wordfence, tags: [wordfence]}

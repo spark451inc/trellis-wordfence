@@ -6,15 +6,20 @@
   failed_when: false
 
 - name: Install Wordfence CLI binary
-  when: wordfence_installed.rc != 0 or wordfence_version not in wordfence_installed.stdout
+  when: >
+    wordfence_installed.rc != 0 or
+    wordfence_version not in wordfence_installed.stdout
   block:
     - name: Set CPU architecture for download
       set_fact:
-        _wordfence_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_architecture] }}"
+        _wordfence_arch: >-
+          {{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_architecture] }}
 
     - name: Download Wordfence CLI tarball
       get_url:
-        url: "https://github.com/wordfence/wordfence-cli/releases/download/v{{ wordfence_version }}/wordfence_{{ _wordfence_arch }}.tar.gz"
+        url: >-
+          https://github.com/wordfence/wordfence-cli/releases/download/v{{
+          wordfence_version }}/wordfence_{{ _wordfence_arch }}.tar.gz
         dest: "/tmp/wordfence_{{ _wordfence_arch }}.tar.gz"
         mode: "0600"
 
