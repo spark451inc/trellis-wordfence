@@ -181,4 +181,4 @@ sudo wordfence vuln-scan --configuration /etc/wordfence/wordfence-cli.ini /srv/w
 
 ## License
 
-MIT
+GPL2.0
