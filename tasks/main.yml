@@ -1,0 +1,39 @@
+---
+- name: Validate Wordfence license
+  ansible.builtin.assert:
+    that:
+      - wordfence_license is string
+      - wordfence_license | string | trim | length > 0
+    fail_msg: wordfence_license must contain a Wordfence CLI license key.
+  tags: [wordfence, wordfence-configure]
+
+- name: Validate S3 destination
+  ansible.builtin.assert:
+    that:
+      - wordfence_s3_bucket | length > 0
+      - not wordfence_s3_bucket.startswith('s3://')
+      - "'/' not in wordfence_s3_bucket"
+    fail_msg: >-
+      wordfence_s3_bucket must contain an existing S3 bucket name, not an S3 URI.
+  tags: [wordfence, wordfence-configure]
+
+- name: Validate Trellis site inventory
+  ansible.builtin.assert:
+    that:
+      - wordpress_sites is defined
+      - wordpress_sites is mapping
+      - wordpress_sites | length > 0
+    fail_msg: wordpress_sites must contain at least one Bedrock site.
+  tags: [wordfence, wordfence-configure]
+
+- name: Install Wordfence CLI
+  ansible.builtin.import_tasks: install.yml
+  tags: [wordfence, wordfence-install]
+
+- name: Configure Wordfence CLI
+  ansible.builtin.import_tasks: configure.yml
+  tags: [wordfence, wordfence-configure]
+
+- name: Schedule Wordfence CLI scans
+  ansible.builtin.import_tasks: schedule.yml
+  tags: [wordfence, wordfence-schedule]

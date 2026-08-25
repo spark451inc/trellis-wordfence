@@ -1,0 +1,175 @@
+---
+- name: Install AWS CLI dependency
+  ansible.builtin.apt:
+    name: unzip
+    state: present
+    cache_valid_time: "{{ apt_cache_valid_time }}"
+
+- name: Check installed AWS CLI version
+  ansible.builtin.command: /usr/local/bin/aws --version
+  register: wordfence_aws_cli_installed
+  changed_when: false
+  failed_when: false
+
+- name: Install AWS CLI v2
+  when: >-
+    'aws-cli/' ~ wordfence_aws_cli_version ~ ' ' not in
+    (wordfence_aws_cli_installed.stdout ~ wordfence_aws_cli_installed.stderr)
+  block:
+    - name: Validate AWS CLI CPU architecture
+      ansible.builtin.assert:
+        that:
+          - ansible_architecture in wordfence_aws_cli_checksums
+        fail_msg: >-
+          Unsupported CPU architecture {{ ansible_architecture }}.
+          AWS CLI v2 installers are configured for x86_64 and aarch64.
+
+    - name: Create AWS CLI installer directory
+      ansible.builtin.file:
+        path: /tmp/wordfence-aws-cli
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Download AWS CLI v2 installer
+      ansible.builtin.get_url:
+        url: >-
+          https://awscli.amazonaws.com/awscli-exe-linux-{{
+          ansible_architecture }}-{{ wordfence_aws_cli_version }}.zip
+        dest: /tmp/wordfence-aws-cli.zip
+        mode: "0600"
+        checksum: "{{ wordfence_aws_cli_checksums[ansible_architecture] }}"
+
+    - name: Extract AWS CLI v2 installer
+      ansible.builtin.unarchive:
+        src: /tmp/wordfence-aws-cli.zip
+        dest: /tmp/wordfence-aws-cli
+        remote_src: true
+
+    - name: Run AWS CLI v2 installer
+      ansible.builtin.command:
+        cmd: >-
+          /tmp/wordfence-aws-cli/aws/install
+          --bin-dir /usr/local/bin
+          --install-dir /usr/local/aws-cli
+          --update
+      changed_when: true
+  always:
+    - name: Remove AWS CLI v2 installer archive
+      ansible.builtin.file:
+        path: /tmp/wordfence-aws-cli.zip
+        state: absent
+
+    - name: Remove AWS CLI v2 installer directory
+      ansible.builtin.file:
+        path: /tmp/wordfence-aws-cli
+        state: absent
+
+- name: Verify AWS CLI installation
+  ansible.builtin.command: /usr/local/bin/aws --version
+  register: wordfence_aws_cli_version_check
+  changed_when: false
+  failed_when: >-
+    wordfence_aws_cli_version_check.rc != 0 or
+    'aws-cli/' ~ wordfence_aws_cli_version ~ ' ' not in
+    (wordfence_aws_cli_version_check.stdout ~
+    wordfence_aws_cli_version_check.stderr)
+
+- name: Check installed Wordfence CLI version
+  ansible.builtin.command: /usr/local/bin/wordfence version
+  register: wordfence_installed
+  changed_when: false
+  failed_when: false
+
+- name: Install Wordfence CLI binary
+  when: >
+    wordfence_installed.rc != 0 or
+    ((wordfence_installed.stdout_lines | default([]) | first)
+    | default('') | trim) is not match(
+    '^Wordfence CLI ' ~ (wordfence_version | regex_escape) ~
+    '(?: "[^"]*")?$')
+  block:
+    - name: Validate CPU architecture
+      ansible.builtin.assert:
+        that:
+          - ansible_architecture in ['x86_64', 'aarch64']
+        fail_msg: >-
+          Unsupported CPU architecture {{ ansible_architecture }}.
+          Wordfence CLI provides standalone binaries for x86_64 and aarch64.
+
+    - name: Set CPU architecture for download
+      ansible.builtin.set_fact:
+        _wordfence_arch: >-
+          {{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_architecture] }}
+
+    - name: Create Wordfence CLI staging directory
+      ansible.builtin.tempfile:
+        state: directory
+        path: /usr/local/bin
+        prefix: .wordfence-install-
+      register: wordfence_staging
+
+    - name: Stage and install Wordfence CLI
+      block:
+        - name: Download Wordfence CLI tarball
+          ansible.builtin.get_url:
+            url: >-
+              https://github.com/wordfence/wordfence-cli/releases/download/v{{
+              wordfence_version }}/wordfence_{{ _wordfence_arch }}.tar.gz
+            dest: "{{ wordfence_staging.path }}/wordfence.tar.gz"
+            mode: "0600"
+            checksum: "{{ wordfence_checksums[_wordfence_arch] }}"
+
+        - name: Extract Wordfence CLI into staging
+          ansible.builtin.unarchive:
+            src: "{{ wordfence_staging.path }}/wordfence.tar.gz"
+            dest: "{{ wordfence_staging.path }}"
+            remote_src: true
+
+        - name: Set staged Wordfence CLI permissions
+          ansible.builtin.file:
+            path: "{{ wordfence_staging.path }}/wordfence"
+            state: file
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Verify staged Wordfence CLI
+          ansible.builtin.command:
+            argv:
+              - "{{ wordfence_staging.path }}/wordfence"
+              - version
+          register: wordfence_staged_version
+          changed_when: false
+          failed_when: >-
+            wordfence_staged_version.rc != 0 or
+            ((wordfence_staged_version.stdout_lines | default([]) | first)
+            | default('') | trim) is not match(
+            '^Wordfence CLI ' ~ (wordfence_version | regex_escape) ~
+            '(?: "[^"]*")?$')
+
+        - name: Install verified Wordfence CLI
+          ansible.builtin.copy:
+            src: "{{ wordfence_staging.path }}/wordfence"
+            dest: /usr/local/bin/wordfence
+            remote_src: true
+            owner: root
+            group: root
+            mode: "0755"
+      always:
+        - name: Remove Wordfence CLI staging directory
+          ansible.builtin.file:
+            path: "{{ wordfence_staging.path }}"
+            state: absent
+
+- name: Verify Wordfence CLI installation
+  ansible.builtin.command: /usr/local/bin/wordfence version
+  changed_when: false
+  register: wordfence_version_check
+  failed_when: >-
+    wordfence_version_check.rc != 0 or
+    ((wordfence_version_check.stdout_lines | default([]) | first)
+    | default('') | trim) is not match(
+    '^Wordfence CLI ' ~ (wordfence_version | regex_escape) ~
+    '(?: "[^"]*")?$')

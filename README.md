@@ -2,58 +2,86 @@
 
 An Ansible role that installs, configures, and schedules [Wordfence CLI](https://github.com/wordfence/wordfence-cli) on [Roots Trellis](https://roots.io/trellis/)-managed WordPress servers.
 
-- **Trellis** v1.31.0+
-- **Wordfence CLI** v5.0.3+
-
 ## Features
 
 - Installs Wordfence CLI from the precompiled binary (no Python/pip required)
+- Verifies the official binary against its pinned SHA-256 checksum
+- Installs a pinned, verified AWS CLI v2 release
 - Writes a system-wide configuration file at `/etc/wordfence/wordfence-cli.ini`
-- Schedules daily **malware scans** and **vulnerability scans** via cron with flock to prevent overlapping jobs
-- Outputs scan results as CSV (configurable) to `/var/log/wordfence/`
-- Optional email reporting via SMTP or sendmail
-- Configures `logrotate` to manage scan log files
+- Schedules daily **malware scans** and **vulnerability scans** with a shared lock
+- Uploads CSV results and diagnostic logs to an existing S3 bucket
+- Accepts the Wordfence CLI license terms for noninteractive scheduled scans
 
 ## Requirements
 
-- Trellis ≥ 1.0 provisioned Ubuntu server (20.04, 22.04, or 24.04)
+- Trellis-managed Ubuntu server
 - Ansible ≥ 2.10
 - A free or paid [Wordfence CLI license](https://www.wordfence.com/products/wordfence-cli/)
+- An existing S3 bucket and an EC2 instance profile that can write objects
+  under the configured prefix
 
-## Installation
+Provisioning this role causes scheduled and manually invoked runner scans to
+pass Wordfence CLI's `--accept-terms` option. Review the
+[Wordfence CLI license terms](https://www.wordfence.com/wordfence-cli-license-terms-and-conditions/)
+before deploying the role.
 
-Copy or symlink the `roles/wordfence` directory into your Trellis project:
+## Wire into Trellis
 
-```bash
-cp -r roles/wordfence /path/to/your/trellis/roles/wordfence
-```
+Trellis provisions custom roles from the main play in `server.yml`. Add this
+role there so it runs automatically during normal staging and production
+provisioning.
 
-Or reference this repository as a [Git submodule](https://git-scm.com/book/en/v2/Git-Tools-Submodules) and symlink the role.
+### 1. Add the role to `galaxy.yml`
 
-## Configuration
-
-### 1. Add your Wordfence license to Ansible Vault
-
-In your Trellis project, add the license key to `group_vars/production/vault.yml` (encrypted with `ansible-vault`):
+Add the private Git repository under the existing `roles:` key in Trellis's
+`galaxy.yml`:
 
 ```yaml
+roles:
+  # Existing Trellis roles...
+  - name: wordfence
+    src: git@github.com:spark451inc/Trellis-WordFence-Cli.git
+    scm: git
+    version: v1.0.0
+```
+
+The example assumes the first release is published as `v1.0.0`; pin `version`
+to an existing release tag. The machine running Trellis or Ansible must have
+SSH access to the private GitHub repository. `trellis provision` installs
+entries from `galaxy.yml` automatically.
+
+### 2. Add the role to `server.yml`
+
+In the main `WordPress Server` play, append Wordfence to the existing `roles`
+list:
+
+```yaml
+roles:
+  # Existing Trellis roles...
+  - { role: wordpress-setup, tags: [wordpress, wordpress-setup, letsencrypt] }
+  - { role: wordfence, tags: [wordfence] }
+```
+
+Trellis upgrades may change `server.yml`; preserve this role entry when merging
+upstream changes.
+
+### 3. Configure each environment
+
+Add the license to each environment's encrypted vault file:
+
+```yaml
+# group_vars/production/vault.yml
 vault_wordfence_license: "your-license-key-here"
 ```
 
-### 2. Set role variables
-
-Add any overrides to `group_vars/production/wordfence.yml` (or `group_vars/all/wordfence.yml`):
+Repeat this in `group_vars/staging/vault.yml`. Then configure the existing S3
+bucket in both `group_vars/production/wordfence.yml` and
+`group_vars/staging/wordfence.yml`:
 
 ```yaml
-# License is pulled from vault automatically:
-wordfence_license: "{{ vault_wordfence_license }}"
-
-# Paths to scan — defaults to Trellis www_root (/srv/www)
-wordfence_malware_scan_paths:
-  - /srv/www
-
-wordfence_vuln_scan_paths:
-  - /srv/www
+# Existing destination bucket; do not include s3://
+wordfence_s3_bucket: example-security-reports
+wordfence_s3_prefix: wordfence
 
 # Cron schedule for malware scan (default: 02:00 daily)
 wordfence_malware_scan_cron_hour: "2"
@@ -62,123 +90,100 @@ wordfence_malware_scan_cron_minute: "0"
 # Cron schedule for vulnerability scan (default: 03:00 daily)
 wordfence_vuln_scan_cron_hour: "3"
 wordfence_vuln_scan_cron_minute: "0"
-
-# Email reporting (optional)
-wordfence_email: "admin@example.com"
-wordfence_smtp_host: "smtp.example.com"
-wordfence_smtp_user: "smtp-user@example.com"
-# wordfence_smtp_password stored in vault as vault_wordfence_smtp_password
 ```
 
-### 3. Run the playbook
+Values shared by staging and production can instead live in
+`group_vars/all/wordfence.yml`. Provisioning stops before configuration if the
+resolved environment license is blank.
+
+### 4. Provision Trellis
+
+Normal Trellis provisioning now runs the Wordfence role automatically:
 
 ```bash
-# From within your Trellis directory:
-ansible-playbook wordfence.yml -e env=production
+trellis provision staging
+trellis provision production
 
-# Install only:
-ansible-playbook wordfence.yml -e env=production --tags wordfence-install
-
-# Reconfigure only:
-ansible-playbook wordfence.yml -e env=production --tags wordfence-configure
-
-# Update cron schedule only:
-ansible-playbook wordfence.yml -e env=production --tags wordfence-schedule
+# Run only this role:
+trellis provision --tags wordfence staging
+trellis provision --tags wordfence production
 ```
+
+Without Trellis CLI, run the same `server.yml` play directly:
+
+```bash
+ansible-galaxy install --force -r galaxy.yml
+ansible-playbook server.yml -e env=staging
+ansible-playbook server.yml -e env=production
+```
+
+The Trellis `env` value is embedded in the managed runner and separates S3
+objects by environment. Provision staging with `-e env=staging` and production
+with `-e env=production`.
 
 ## Role Variables
 
-All variables have sensible defaults defined in [`roles/wordfence/defaults/main.yml`](roles/wordfence/defaults/main.yml).
+Defaults are defined in [`defaults/main.yml`](defaults/main.yml).
 
 | Variable | Default | Description |
 |---|---|---|
-| `wordfence_version` | `5.0.3` | Wordfence CLI version to install |
+| `wordfence_version` | `5.0.4` | Wordfence CLI version to install |
+| `wordfence_checksums` | Architecture-specific SHA-256 values | Checksums published with the pinned release |
+| `wordfence_aws_cli_version` | `2.36.30` | AWS CLI v2 version to install |
+| `wordfence_aws_cli_checksums` | Architecture-specific SHA-256 values | Checksums verified against AWS-signed installers |
 | `wordfence_license` | `""` | License key (use vault) |
-| `wordfence_user` | `root` | System user that runs scans |
-| `wordfence_bin` | `/usr/local/bin/wordfence` | Path to the wordfence executable |
-| `wordfence_config_dir` | `/etc/wordfence` | Configuration directory |
-| `wordfence_config_file` | `/etc/wordfence/wordfence-cli.ini` | Configuration file path |
-| `wordfence_cache_dir` | `/var/cache/wordfence` | Cache directory |
-| `wordfence_lock_dir` | `/var/lock/wordfence` | flock lock file directory |
-| `wordfence_log_dir` | `/var/log/wordfence` | Log/output directory |
+| `wordfence_s3_bucket` | `""` | Existing destination bucket; required |
+| `wordfence_s3_prefix` | `wordfence` | Object-key prefix; surrounding slashes are removed |
 | `wordfence_malware_scan_enabled` | `true` | Enable malware scan cron job |
-| `wordfence_malware_scan_paths` | `[/srv/www]` | Paths to scan for malware |
 | `wordfence_malware_scan_cron_minute` | `0` | Cron minute for malware scan |
 | `wordfence_malware_scan_cron_hour` | `2` | Cron hour for malware scan |
-| `wordfence_malware_scan_output_format` | `csv` | Output format: `csv`, `json`, `human` |
-| `wordfence_malware_scan_output_path` | `/var/log/wordfence/malware-scan.csv` | Output file path |
 | `wordfence_vuln_scan_enabled` | `true` | Enable vulnerability scan cron job |
-| `wordfence_vuln_scan_paths` | `[/srv/www]` | Paths to scan for vulnerabilities |
 | `wordfence_vuln_scan_cron_minute` | `0` | Cron minute for vuln scan |
 | `wordfence_vuln_scan_cron_hour` | `3` | Cron hour for vuln scan |
-| `wordfence_vuln_scan_output_format` | `csv` | Output format: `csv`, `json`, `human` |
-| `wordfence_vuln_scan_output_path` | `/var/log/wordfence/vuln-scan.csv` | Output file path |
-| `wordfence_email` | `""` | Email address(es) for reports |
-| `wordfence_email_from` | `""` | From address for email reports |
-| `wordfence_smtp_host` | `""` | SMTP hostname (blank = use sendmail) |
-| `wordfence_smtp_port` | `587` | SMTP port |
-| `wordfence_smtp_tls_mode` | `starttls` | TLS mode: `none`, `smtps`, `starttls` |
-| `wordfence_smtp_user` | `""` | SMTP username |
-| `wordfence_smtp_password` | `""` | SMTP password (use vault) |
-| `wordfence_logrotate_enabled` | `true` | Enable logrotate configuration |
-| `wordfence_logrotate_rotate` | `14` | Number of rotations to retain |
 
-## Role Structure
+## Scheduled Scans
 
-```
-roles/wordfence/
-├── defaults/
-│   └── main.yml              # Default variable values
-├── handlers/
-│   └── main.yml              # (empty — no daemons to restart)
-├── meta/
-│   └── main.yml              # Galaxy metadata
-├── tasks/
-│   ├── main.yml              # Entry point — imports sub-tasks
-│   ├── install.yml           # Install Wordfence CLI and dependencies
-│   ├── configure.yml         # Write config file and set up directories
-│   └── schedule.yml          # Set up cron jobs
-└── templates/
-    ├── wordfence-cli.ini.j2  # Wordfence CLI INI configuration
-    └── wordfence-logrotate.j2 # Logrotate configuration
+Scan paths are derived from Trellis's `wordpress_sites` inventory, including
+each site's supported `current_path` and `public_path` overrides. With Trellis
+defaults, malware scans cover `/srv/www/<site>/current/web`; vulnerability
+scans target `/srv/www/<site>/current/web/wp`. Wordfence automatically
+recognizes Bedrock's adjacent `web/app` content directory and fails incomplete
+scans into the S3 diagnostic path.
+
+The runner skips inventory sites that do not yet have their active deployment
+path and records each skipped path in the diagnostic log. If no deployed sites
+remain, the run fails and uploads only a failure diagnostic.
+
+Malware scans run daily at 02:00 and vulnerability scans at 03:00 by default.
+A shared nonblocking lock protects scheduled and manual scans. If another scan
+holds the lock, the invocation fails immediately with status 75 and uploads a
+failure diagnostic instead of queuing.
+
+Each scan writes results and diagnostics to a temporary directory, uploads the
+diagnostic log, then uploads the CSV as the success marker. Failed scans upload
+only their diagnostic log under `failed/`.
+
+```text
+wordfence/<environment>/<scan-type>/YYYY/MM/DD/<timestamp>.csv
+wordfence/<environment>/<scan-type>/YYYY/MM/DD/<timestamp>.log
+wordfence/<environment>/failed/<scan-type>/YYYY/MM/DD/<timestamp>-scan-<status>.log
 ```
 
-## Cron Jobs
+This environment-only layout assumes one scanning host per environment.
+Multiple hosts in the same environment can generate the same timestamped key.
 
-The role installs two cron jobs for the configured user (default: `root`):
-
-**Malware scan** (default: daily at 02:00)
-```
-0 2 * * *  root  /usr/bin/flock -w 0 /var/lock/wordfence/malware-scan.lock \
-  /usr/local/bin/wordfence malware-scan \
-  --configuration /etc/wordfence/wordfence-cli.ini \
-  --no-banner --no-color \
-  /srv/www >> /var/log/wordfence/malware-scan.log 2>&1
-```
-
-**Vulnerability scan** (default: daily at 03:00)
-```
-0 3 * * *  root  /usr/bin/flock -w 0 /var/lock/wordfence/vuln-scan.lock \
-  /usr/local/bin/wordfence vuln-scan \
-  --configuration /etc/wordfence/wordfence-cli.ini \
-  --no-banner --no-color \
-  /srv/www >> /var/log/wordfence/vuln-scan.log 2>&1
-```
-
-`flock` prevents duplicate scans from running concurrently.
+Scheduled scan reports use CSV so every successful results object has a stable
+format and `.csv` extension.
 
 ## Running a Scan Manually
 
 After provisioning, you can trigger a scan on-demand:
 
 ```bash
-# SSH into the server
-sudo wordfence malware-scan --configuration /etc/wordfence/wordfence-cli.ini /srv/www
-
-# Vulnerability scan
-sudo wordfence vuln-scan --configuration /etc/wordfence/wordfence-cli.ini /srv/www
+sudo /usr/local/sbin/wordfence-scan-to-s3 malware-scan
+sudo /usr/local/sbin/wordfence-scan-to-s3 vuln-scan
 ```
 
 ## License
 
-GPL2.0
+[GPL-2.0-or-later](LICENSE)

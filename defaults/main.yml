@@ -1,0 +1,29 @@
+---
+# Update the version and checksums together.
+wordfence_version: "5.0.4"
+wordfence_checksums:
+  amd64: sha256:df2330a629395197cf2cf8512252b5805af88a2c40865933f8cfd42f67995176
+  arm64: sha256:fbf3c29ddc54de6dfe21491c0f2355bc90a72a7c99c09346a8baba6590a59cf3
+
+# Checksums were derived from installers signed by the AWS CLI team's published key.
+wordfence_aws_cli_version: "2.36.30"
+wordfence_aws_cli_checksums:
+  x86_64: sha256:a0a4f1dd3fe547f7be0569d127b3adb77646e232ef69820aa79edf4f7ea2a5a2
+  aarch64: sha256:d74351cb7cc098ac9de421a9e97aff881bc415aa6de1f8a9ea97114f0c220b32
+
+# Store vault_wordfence_license in Ansible Vault.
+wordfence_license: "{{ vault_wordfence_license | default('') }}"
+
+# Existing destination bucket; do not include s3://.
+wordfence_s3_bucket: ""
+wordfence_s3_prefix: wordfence
+
+# Malware schedule
+wordfence_malware_scan_enabled: true
+wordfence_malware_scan_cron_minute: "0"
+wordfence_malware_scan_cron_hour: "2"
+
+# Vulnerability schedule
+wordfence_vuln_scan_enabled: true
+wordfence_vuln_scan_cron_minute: "0"
+wordfence_vuln_scan_cron_hour: "3"
