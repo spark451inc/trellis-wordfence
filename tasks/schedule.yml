@@ -1,0 +1,18 @@
+---
+- name: Schedule Wordfence CLI malware scan
+  ansible.builtin.cron:
+    name: "Wordfence CLI malware scan"
+    user: root
+    minute: "{{ wordfence_malware_scan_cron_minute }}"
+    hour: "{{ wordfence_malware_scan_cron_hour }}"
+    job: /usr/local/sbin/wordfence-scan-to-s3 malware-scan
+    state: "{{ wordfence_malware_scan_enabled | ternary('present', 'absent') }}"
+
+- name: Schedule Wordfence CLI vulnerability scan
+  ansible.builtin.cron:
+    name: "Wordfence CLI vulnerability scan"
+    user: root
+    minute: "{{ wordfence_vuln_scan_cron_minute }}"
+    hour: "{{ wordfence_vuln_scan_cron_hour }}"
+    job: /usr/local/sbin/wordfence-scan-to-s3 vuln-scan
+    state: "{{ wordfence_vuln_scan_enabled | ternary('present', 'absent') }}"
