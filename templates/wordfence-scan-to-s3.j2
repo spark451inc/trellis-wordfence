@@ -59,19 +59,19 @@ cleanup() {
 trap cleanup EXIT
 
 scan_status=0
-if ! exec 9>/var/cache/wordfence/scan.lock; then
-  printf 'Failed to open the Wordfence scan lock\n' >> "$log_path"
+if ! exec 9>"/var/cache/wordfence/${scan_type}.lock"; then
+  printf 'Failed to open the Wordfence %s lock\n' "$scan_type" >> "$log_path"
   scan_status=73
 else
   lock_status=0
   /usr/bin/flock --nonblock --conflict-exit-code 75 9 2>> "$log_path" ||
     lock_status=$?
   if ((lock_status == 75)); then
-    printf 'Another Wordfence scan is already running\n' >> "$log_path"
+    printf 'Another Wordfence %s is already running\n' "$scan_type" >> "$log_path"
     scan_status=75
   elif ((lock_status != 0)); then
-    printf 'Failed to acquire the Wordfence scan lock with status %d\n' \
-      "$lock_status" >> "$log_path"
+    printf 'Failed to acquire the Wordfence %s lock with status %d\n' \
+      "$scan_type" "$lock_status" >> "$log_path"
     scan_status="$lock_status"
   fi
 fi

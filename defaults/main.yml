@@ -18,12 +18,12 @@ wordfence_license: "{{ vault_wordfence_license | default('') }}"
 wordfence_s3_bucket: ""
 wordfence_s3_prefix: wordfence
 
+# Vulnerability schedule
+wordfence_vuln_scan_enabled: true
+wordfence_vuln_scan_cron_minute: "0"
+wordfence_vuln_scan_cron_hour: "1"
+
 # Malware schedule
 wordfence_malware_scan_enabled: true
 wordfence_malware_scan_cron_minute: "0"
 wordfence_malware_scan_cron_hour: "2"
-
-# Vulnerability schedule
-wordfence_vuln_scan_enabled: true
-wordfence_vuln_scan_cron_minute: "0"
-wordfence_vuln_scan_cron_hour: "3"

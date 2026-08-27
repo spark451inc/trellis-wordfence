@@ -19,9 +19,9 @@
     - name: Validate AWS CLI CPU architecture
       ansible.builtin.assert:
         that:
-          - ansible_architecture in wordfence_aws_cli_checksums
+          - ansible_facts['architecture'] in wordfence_aws_cli_checksums
         fail_msg: >-
-          Unsupported CPU architecture {{ ansible_architecture }}.
+          Unsupported CPU architecture {{ ansible_facts['architecture'] }}.
           AWS CLI v2 installers are configured for x86_64 and aarch64.
 
     - name: Create AWS CLI installer directory
@@ -36,10 +36,10 @@
       ansible.builtin.get_url:
         url: >-
           https://awscli.amazonaws.com/awscli-exe-linux-{{
-          ansible_architecture }}-{{ wordfence_aws_cli_version }}.zip
+          ansible_facts['architecture'] }}-{{ wordfence_aws_cli_version }}.zip
         dest: /tmp/wordfence-aws-cli.zip
         mode: "0600"
-        checksum: "{{ wordfence_aws_cli_checksums[ansible_architecture] }}"
+        checksum: "{{ wordfence_aws_cli_checksums[ansible_facts['architecture']] }}"
 
     - name: Extract AWS CLI v2 installer
       ansible.builtin.unarchive:
@@ -93,15 +93,15 @@
     - name: Validate CPU architecture
       ansible.builtin.assert:
         that:
-          - ansible_architecture in ['x86_64', 'aarch64']
+          - ansible_facts['architecture'] in ['x86_64', 'aarch64']
         fail_msg: >-
-          Unsupported CPU architecture {{ ansible_architecture }}.
+          Unsupported CPU architecture {{ ansible_facts['architecture'] }}.
           Wordfence CLI provides standalone binaries for x86_64 and aarch64.
 
     - name: Set CPU architecture for download
       ansible.builtin.set_fact:
         _wordfence_arch: >-
-          {{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_architecture] }}
+          {{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_facts['architecture']] }}
 
     - name: Create Wordfence CLI staging directory
       ansible.builtin.tempfile:

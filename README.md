@@ -8,7 +8,9 @@ An Ansible role that installs, configures, and schedules [Wordfence CLI](https:/
 - Verifies the official binary against its pinned SHA-256 checksum
 - Installs a pinned, verified AWS CLI v2 release
 - Writes a system-wide configuration file at `/etc/wordfence/wordfence-cli.ini`
-- Schedules daily **malware scans** and **vulnerability scans** with a shared lock
+- Schedules daily **malware scans** and **vulnerability scans**, each guarded
+  by its own lock so same-type runs cannot overlap while the two scan types
+  can
 - Uploads CSV results and diagnostic logs to an existing S3 bucket
 - Accepts the Wordfence CLI license terms for noninteractive scheduled scans
 
@@ -83,13 +85,13 @@ bucket in both `group_vars/production/wordfence.yml` and
 wordfence_s3_bucket: example-security-reports
 wordfence_s3_prefix: wordfence
 
+# Cron schedule for vulnerability scan (default: 01:00 daily)
+wordfence_vuln_scan_cron_hour: "1"
+wordfence_vuln_scan_cron_minute: "0"
+
 # Cron schedule for malware scan (default: 02:00 daily)
 wordfence_malware_scan_cron_hour: "2"
 wordfence_malware_scan_cron_minute: "0"
-
-# Cron schedule for vulnerability scan (default: 03:00 daily)
-wordfence_vuln_scan_cron_hour: "3"
-wordfence_vuln_scan_cron_minute: "0"
 ```
 
 Values shared by staging and production can instead live in
@@ -134,12 +136,12 @@ Defaults are defined in [`defaults/main.yml`](defaults/main.yml).
 | `wordfence_license` | `""` | License key (use vault) |
 | `wordfence_s3_bucket` | `""` | Existing destination bucket; required |
 | `wordfence_s3_prefix` | `wordfence` | Object-key prefix; surrounding slashes are removed |
+| `wordfence_vuln_scan_enabled` | `true` | Enable vulnerability scan cron job |
+| `wordfence_vuln_scan_cron_minute` | `0` | Cron minute for vuln scan |
+| `wordfence_vuln_scan_cron_hour` | `1` | Cron hour for vuln scan |
 | `wordfence_malware_scan_enabled` | `true` | Enable malware scan cron job |
 | `wordfence_malware_scan_cron_minute` | `0` | Cron minute for malware scan |
 | `wordfence_malware_scan_cron_hour` | `2` | Cron hour for malware scan |
-| `wordfence_vuln_scan_enabled` | `true` | Enable vulnerability scan cron job |
-| `wordfence_vuln_scan_cron_minute` | `0` | Cron minute for vuln scan |
-| `wordfence_vuln_scan_cron_hour` | `3` | Cron hour for vuln scan |
 
 ## Scheduled Scans
 
@@ -154,10 +156,13 @@ The runner skips inventory sites that do not yet have their active deployment
 path and records each skipped path in the diagnostic log. If no deployed sites
 remain, the run fails and uploads only a failure diagnostic.
 
-Malware scans run daily at 02:00 and vulnerability scans at 03:00 by default.
-A shared nonblocking lock protects scheduled and manual scans. If another scan
-holds the lock, the invocation fails immediately with status 75 and uploads a
-failure diagnostic instead of queuing.
+Vulnerability scans run daily at 01:00 and malware scans at 02:00 by default.
+Each scan type is guarded by its own nonblocking lock file
+(`/var/cache/wordfence/<scan-type>.lock`), so a scheduled or manual run only
+conflicts with another run of the *same* scan type; malware and vulnerability
+scans may run concurrently. If a same-type scan already holds the lock, the
+new invocation fails immediately with status 75 and uploads a failure
+diagnostic instead of queuing.
 
 Each scan writes results and diagnostics to a temporary directory, uploads the
 diagnostic log, then uploads the CSV as the success marker. Failed scans upload
