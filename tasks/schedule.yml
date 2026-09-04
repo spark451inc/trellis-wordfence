@@ -1,5 +1,6 @@
 ---
-# Hosts provisioned with 1.x scheduled root cron jobs guarded by lock files.
+# Hosts provisioned with 1.x scheduled root cron jobs guarded by lock files
+# (a shared scan.lock in 1.0.0, one per scan type from 1.0.1).
 # Remove these two cleanup tasks in 3.0.0.
 - name: Remove legacy Wordfence cron jobs
   ansible.builtin.cron:
@@ -12,12 +13,12 @@
 
 - name: Remove legacy Wordfence lock files
   ansible.builtin.file:
-    path: "/var/cache/wordfence/{{ scan.type }}.lock"
+    path: "/var/cache/wordfence/{{ item }}"
     state: absent
-  loop: "{{ wordfence_scans }}"
-  loop_control:
-    loop_var: scan
-    label: "{{ scan.type }}"
+  loop:
+    - scan.lock
+    - malware-scan.lock
+    - vuln-scan.lock
 
 - name: Install Wordfence scan services
   ansible.builtin.template:
