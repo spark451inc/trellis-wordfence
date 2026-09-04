@@ -1,7 +1,8 @@
 ---
 # Hosts provisioned with 1.x scheduled root cron jobs guarded by lock files
 # (a shared scan.lock in 1.0.0, one per scan type from 1.0.1).
-# Remove these two cleanup tasks in 3.0.0.
+# Remove these two cleanup tasks in 3.0.0, together with the cache ownership
+# migration in configure.yml.
 - name: Remove legacy Wordfence cron jobs
   ansible.builtin.cron:
     name: "{{ item }}"

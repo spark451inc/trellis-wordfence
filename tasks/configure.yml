@@ -7,13 +7,23 @@
     group: "{{ web_group }}"
     mode: "0750"
 
-- name: Ensure Wordfence CLI cache directory is owned by the scan user
+- name: Ensure Wordfence CLI cache directory exists
   ansible.builtin.file:
     path: /var/cache/wordfence
     state: directory
     owner: "{{ web_user }}"
     group: "{{ web_group }}"
-    mode: "u=rwX,go="
+    mode: "0700"
+
+# Hosts provisioned with 1.x ran scans as root, so their cache contents are
+# root-owned. Ownership only; Wordfence manages file modes inside the 0700
+# directory. Remove this task in 3.0.0.
+- name: Migrate legacy Wordfence cache contents to the scan user
+  ansible.builtin.file:
+    path: /var/cache/wordfence
+    state: directory
+    owner: "{{ web_user }}"
+    group: "{{ web_group }}"
     recurse: true
 
 - name: Write Wordfence CLI configuration file

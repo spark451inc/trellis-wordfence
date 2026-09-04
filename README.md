@@ -241,8 +241,9 @@ change:
   longer written. Use journald instead.
 - Run scans manually with `systemctl start`, not by invoking the runner script.
 
-Provisioning 2.x removes the 1.x cron entries and lock files. Provision every
-host with a 2.x release before upgrading to 3.0.0, which drops that cleanup.
+Provisioning 2.x removes the 1.x cron entries and lock files and migrates
+ownership of the cache contents. Provision every host with a 2.x release before
+upgrading to 3.0.0, which drops that cleanup.
 
 ## License
 
