@@ -1,0 +1,18 @@
+[Unit]
+Description={{ scan.description }}
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User={{ web_user }}
+Group={{ web_group }}
+ExecStart=/usr/local/sbin/wordfence-scan-to-s3 {{ scan.type }}
+TimeoutStartSec=20h
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/cache/wordfence

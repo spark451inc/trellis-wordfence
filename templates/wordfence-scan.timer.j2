@@ -1,0 +1,9 @@
+[Unit]
+Description=Run the {{ scan.description }}
+
+[Timer]
+OnCalendar={{ scan.on_calendar }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target

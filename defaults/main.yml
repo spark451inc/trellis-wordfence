@@ -18,12 +18,12 @@ wordfence_license: "{{ vault_wordfence_license | default('') }}"
 wordfence_s3_bucket: ""
 wordfence_s3_prefix: wordfence
 
-# Vulnerability schedule
+# Vulnerability scan: systemd OnCalendar expression and optional Uptime Kuma push URL.
 wordfence_vuln_scan_enabled: true
-wordfence_vuln_scan_cron_minute: "0"
-wordfence_vuln_scan_cron_hour: "1"
+wordfence_vuln_scan_on_calendar: "*-*-* 01:00:00"
+wordfence_vuln_scan_uptime_kuma_push_url: ""
 
-# Malware schedule
+# Malware scan: systemd OnCalendar expression and optional Uptime Kuma push URL.
 wordfence_malware_scan_enabled: true
-wordfence_malware_scan_cron_minute: "0"
-wordfence_malware_scan_cron_hour: "2"
+wordfence_malware_scan_on_calendar: "*-*-* 02:00:00"
+wordfence_malware_scan_uptime_kuma_push_url: ""

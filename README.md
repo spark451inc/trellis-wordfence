@@ -8,15 +8,17 @@ An Ansible role that installs, configures, and schedules [Wordfence CLI](https:/
 - Verifies the official binary against its pinned SHA-256 checksum
 - Installs a pinned, verified AWS CLI v2 release
 - Writes a system-wide configuration file at `/etc/wordfence/wordfence-cli.ini`
-- Schedules daily **malware scans** and **vulnerability scans**, each guarded
-  by its own lock so same-type runs cannot overlap while the two scan types
-  can
-- Uploads CSV results and diagnostic logs to an existing S3 bucket
+- Schedules daily **malware scans** and **vulnerability scans** as systemd
+  timers, one service per scan type so same-type runs cannot overlap
+- Runs scans unprivileged as Trellis's `web_user` with reduced CPU and I/O
+  priority and a hardened systemd sandbox
+- Uploads CSV results to an existing S3 bucket; run output goes to journald
+- Optionally reports each run to an Uptime Kuma push monitor
 - Accepts the Wordfence CLI license terms for noninteractive scheduled scans
 
 ## Requirements
 
-- Trellis-managed Ubuntu server
+- Trellis-managed Ubuntu server with systemd
 - Ansible ≥ 2.10
 - A free or paid [Wordfence CLI license](https://www.wordfence.com/products/wordfence-cli/)
 - An existing S3 bucket and an EC2 instance profile that can write objects
@@ -44,11 +46,10 @@ roles:
   - name: wordfence
     src: git@github.com:spark451inc/Trellis-WordFence-Cli.git
     scm: git
-    version: v1.0.0
+    version: v2.0.0
 ```
 
-The example assumes the first release is published as `v1.0.0`; pin `version`
-to an existing release tag. The machine running Trellis or Ansible must have
+Pin `version` to an existing release tag. The machine running Trellis or Ansible must have
 SSH access to the private GitHub repository. `trellis provision` installs
 entries from `galaxy.yml` automatically.
 
@@ -85,18 +86,19 @@ bucket in both `group_vars/production/wordfence.yml` and
 wordfence_s3_bucket: example-security-reports
 wordfence_s3_prefix: wordfence
 
-# Cron schedule for vulnerability scan (default: 01:00 daily)
-wordfence_vuln_scan_cron_hour: "1"
-wordfence_vuln_scan_cron_minute: "0"
+# systemd calendar expressions (defaults: 01:00 and 02:00 daily)
+wordfence_vuln_scan_on_calendar: "*-*-* 01:00:00"
+wordfence_malware_scan_on_calendar: "*-*-* 02:00:00"
 
-# Cron schedule for malware scan (default: 02:00 daily)
-wordfence_malware_scan_cron_hour: "2"
-wordfence_malware_scan_cron_minute: "0"
+# Optional Uptime Kuma push monitors; use a separate monitor per environment
+wordfence_vuln_scan_uptime_kuma_push_url: "{{ vault_wordfence_vuln_scan_uptime_kuma_push_url }}"
+wordfence_malware_scan_uptime_kuma_push_url: "{{ vault_wordfence_malware_scan_uptime_kuma_push_url }}"
 ```
 
 Values shared by staging and production can instead live in
-`group_vars/all/wordfence.yml`. Provisioning stops before configuration if the
-resolved environment license is blank.
+`group_vars/all/wordfence.yml`, but Uptime Kuma push URLs identify a single
+monitor, so keep them per environment. Provisioning stops before configuration
+if the resolved environment license is blank.
 
 ### 4. Provision Trellis
 
@@ -136,12 +138,16 @@ Defaults are defined in [`defaults/main.yml`](defaults/main.yml).
 | `wordfence_license` | `""` | License key (use vault) |
 | `wordfence_s3_bucket` | `""` | Existing destination bucket; required |
 | `wordfence_s3_prefix` | `wordfence` | Object-key prefix; surrounding slashes are removed |
-| `wordfence_vuln_scan_enabled` | `true` | Enable vulnerability scan cron job |
-| `wordfence_vuln_scan_cron_minute` | `0` | Cron minute for vuln scan |
-| `wordfence_vuln_scan_cron_hour` | `1` | Cron hour for vuln scan |
-| `wordfence_malware_scan_enabled` | `true` | Enable malware scan cron job |
-| `wordfence_malware_scan_cron_minute` | `0` | Cron minute for malware scan |
-| `wordfence_malware_scan_cron_hour` | `2` | Cron hour for malware scan |
+| `wordfence_vuln_scan_enabled` | `true` | Enable the vulnerability scan timer |
+| `wordfence_vuln_scan_on_calendar` | `*-*-* 01:00:00` | systemd `OnCalendar` expression for the vulnerability scan |
+| `wordfence_vuln_scan_uptime_kuma_push_url` | `""` | Optional Uptime Kuma push URL for the vulnerability scan |
+| `wordfence_malware_scan_enabled` | `true` | Enable the malware scan timer |
+| `wordfence_malware_scan_on_calendar` | `*-*-* 02:00:00` | systemd `OnCalendar` expression for the malware scan |
+| `wordfence_malware_scan_uptime_kuma_push_url` | `""` | Optional Uptime Kuma push URL for the malware scan |
+
+Schedules use [systemd calendar syntax](https://www.freedesktop.org/software/systemd/man/latest/systemd.time.html#Calendar%20Events);
+check an expression with `systemd-analyze calendar '<expression>'`. An invalid
+expression fails provisioning when the timer is started.
 
 ## Scheduled Scans
 
@@ -149,29 +155,41 @@ Scan paths are derived from Trellis's `wordpress_sites` inventory, including
 each site's supported `current_path` and `public_path` overrides. With Trellis
 defaults, malware scans cover `/srv/www/<site>/current/web`; vulnerability
 scans target `/srv/www/<site>/current/web/wp`. Wordfence automatically
-recognizes Bedrock's adjacent `web/app` content directory and fails incomplete
-scans into the S3 diagnostic path.
+recognizes Bedrock's adjacent `web/app` content directory.
 
 The runner skips inventory sites that do not yet have their active deployment
-path and records each skipped path in the diagnostic log. If no deployed sites
-remain, the run fails and uploads only a failure diagnostic.
+path and logs each skipped path. If no deployed sites remain, the run fails
+with status 66 and uploads nothing.
 
 Vulnerability scans run daily at 01:00 and malware scans at 02:00 by default.
-Each scan type is guarded by its own nonblocking lock file
-(`/var/cache/wordfence/<scan-type>.lock`), so a scheduled or manual run only
-conflicts with another run of the *same* scan type; malware and vulnerability
-scans may run concurrently. If a same-type scan already holds the lock, the
-new invocation fails immediately with status 75 and uploads a failure
-diagnostic instead of queuing.
+Each scan type is its own systemd service and timer:
 
-Each scan writes results and diagnostics to a temporary directory, uploads the
-diagnostic log, then uploads the CSV as the success marker. Failed scans upload
-only their diagnostic log under `failed/`.
+| Scan | Service | Timer |
+|---|---|---|
+| Vulnerability | `wordfence-vuln-scan.service` | `wordfence-vuln-scan.timer` |
+| Malware | `wordfence-malware-scan.service` | `wordfence-malware-scan.timer` |
+
+systemd never starts a second instance of a service that is still running, so
+same-type scans cannot overlap; malware and vulnerability scans may run
+concurrently. Timers use `Persistent=true`, so a run missed while the server
+was off starts at the next boot. Each service has a 20 hour `TimeoutStartSec`
+so a wedged scan is killed before the next day's run. Provisioning only
+enables, starts, or restarts the timers and never starts a service. Disabling a
+scan type stops and disables its timer but leaves the service installed for
+manual runs.
+
+Each service runs as `web_user:web_group` with `Nice=10`, best-effort I/O
+priority 7, a private temporary directory, and a read-only system view except
+for `/var/cache/wordfence`. The Wordfence license in
+`/etc/wordfence/wordfence-cli.ini` is therefore readable by `web_group`, the
+same group PHP-FPM runs as.
+
+Each scan writes its CSV results to a temporary directory and uploads them as
+the success marker. Run output, including Wordfence CLI's own messages, goes to
+journald.
 
 ```text
 wordfence/<environment>/<scan-type>/YYYY/MM/DD/<timestamp>.csv
-wordfence/<environment>/<scan-type>/YYYY/MM/DD/<timestamp>.log
-wordfence/<environment>/failed/<scan-type>/YYYY/MM/DD/<timestamp>-scan-<status>.log
 ```
 
 This environment-only layout assumes one scanning host per environment.
@@ -182,12 +200,49 @@ format and `.csv` extension.
 
 ## Running a Scan Manually
 
-After provisioning, you can trigger a scan on-demand:
+Start the service rather than the runner script so the run is serialized and
+logged like a scheduled one:
 
 ```bash
-sudo /usr/local/sbin/wordfence-scan-to-s3 malware-scan
-sudo /usr/local/sbin/wordfence-scan-to-s3 vuln-scan
+sudo systemctl start wordfence-malware-scan.service
+sudo journalctl -fu wordfence-malware-scan.service
 ```
+
+Inspect schedules and recent runs with:
+
+```bash
+sudo systemctl list-timers 'wordfence-*'
+sudo journalctl -u wordfence-vuln-scan.service -u wordfence-malware-scan.service
+```
+
+## Monitoring with Uptime Kuma
+
+When a push URL is configured, the runner reports `up` only after the scan
+succeeded and its CSV was uploaded, and `down` with the exit status and reason
+for any other outcome. Every push includes `ping=` with the run duration in
+milliseconds, so the monitor's response-time graph tracks how long each scan
+takes.
+
+Create one push monitor per scan type per environment. Set each heartbeat
+interval to 24 hours plus the observed maximum run time; vulnerability scans
+usually finish in minutes, while a malware scan on a host with many sites can
+take several hours. A missed heartbeat catches failures the runner cannot
+report, such as a disabled timer or an unreachable host.
+
+## Upgrading from 1.x
+
+Version 2.0.0 replaces root cron jobs with systemd timers and is a breaking
+change:
+
+- `wordfence_*_cron_hour` and `wordfence_*_cron_minute` are replaced by
+  `wordfence_*_on_calendar`.
+- Scans run as `web_user` instead of root; `/var/cache/wordfence` changes owner.
+- Diagnostic logs are no longer uploaded to S3, and the `failed/` prefix is no
+  longer written. Use journald instead.
+- Run scans manually with `systemctl start`, not by invoking the runner script.
+
+Provisioning 2.x removes the 1.x cron entries and lock files. Provision every
+host with a 2.x release before upgrading to 3.0.0, which drops that cleanup.
 
 ## License
 
