@@ -49,9 +49,9 @@ roles:
     version: v2.0.0
 ```
 
-Pin `version` to an existing release tag. The machine running Trellis or Ansible must have
-SSH access to the private GitHub repository. `trellis provision` installs
-entries from `galaxy.yml` automatically.
+Pin `version` to an existing release tag. The machine running Trellis or
+Ansible must have SSH access to the private GitHub repository.
+`trellis provision` installs entries from `galaxy.yml` automatically.
 
 ### 2. Add the role to `server.yml`
 
@@ -70,16 +70,21 @@ upstream changes.
 
 ### 3. Configure each environment
 
-Add the license to each environment's encrypted vault file:
+Add the license, and optionally the Uptime Kuma push URLs, to each
+environment's encrypted vault file:
 
 ```yaml
 # group_vars/production/vault.yml
 vault_wordfence_license: "your-license-key-here"
+
+# Optional; one push monitor per scan type per environment
+vault_wordfence_vuln_scan_uptime_kuma_push_url: "https://kuma.example.com/api/push/abc123"
+vault_wordfence_malware_scan_uptime_kuma_push_url: "https://kuma.example.com/api/push/def456"
 ```
 
-Repeat this in `group_vars/staging/vault.yml`. Then configure the existing S3
-bucket in both `group_vars/production/wordfence.yml` and
-`group_vars/staging/wordfence.yml`:
+Repeat this in `group_vars/staging/vault.yml` with that environment's own
+values. Then configure the existing S3 bucket in both
+`group_vars/production/wordfence.yml` and `group_vars/staging/wordfence.yml`:
 
 ```yaml
 # Existing destination bucket; do not include s3://
@@ -90,7 +95,7 @@ wordfence_s3_prefix: wordfence
 wordfence_vuln_scan_on_calendar: "*-*-* 01:00:00"
 wordfence_malware_scan_on_calendar: "*-*-* 02:00:00"
 
-# Optional Uptime Kuma push monitors; use a separate monitor per environment
+# Optional Uptime Kuma push monitors; omit or leave empty to disable
 wordfence_vuln_scan_uptime_kuma_push_url: "{{ vault_wordfence_vuln_scan_uptime_kuma_push_url }}"
 wordfence_malware_scan_uptime_kuma_push_url: "{{ vault_wordfence_malware_scan_uptime_kuma_push_url }}"
 ```
@@ -113,6 +118,10 @@ trellis provision --tags wordfence staging
 trellis provision --tags wordfence production
 ```
 
+The role also tags its phases individually as `wordfence-install`,
+`wordfence-configure`, and `wordfence-schedule`, so for example
+`--tags wordfence-schedule` re-renders only the systemd units and timers.
+
 Without Trellis CLI, run the same `server.yml` play directly:
 
 ```bash
@@ -121,9 +130,9 @@ ansible-playbook server.yml -e env=staging
 ansible-playbook server.yml -e env=production
 ```
 
-The Trellis `env` value is embedded in the managed runner and separates S3
-objects by environment. Provision staging with `-e env=staging` and production
-with `-e env=production`.
+The Trellis `env` value is embedded in the managed runner; it separates S3
+objects by environment and is included in Uptime Kuma messages. Provision
+staging with `-e env=staging` and production with `-e env=production`.
 
 ## Role Variables
 
@@ -201,7 +210,8 @@ format and `.csv` extension.
 ## Running a Scan Manually
 
 Start the service rather than the runner script so the run is serialized and
-logged like a scheduled one:
+logged like a scheduled one. `systemctl start` blocks until the scan finishes;
+add `--no-block` to return immediately.
 
 ```bash
 sudo systemctl start wordfence-malware-scan.service
@@ -221,7 +231,10 @@ When a push URL is configured, the runner reports `up` only after the scan
 succeeded and its CSV was uploaded, and `down` with the exit status and reason
 for any other outcome. Every push includes `ping=` with the run duration in
 milliseconds, so the monitor's response-time graph tracks how long each scan
-takes.
+takes. Findings in the CSV do not affect the status; Kuma tracks whether the
+scan ran, not what it found. The URL may be pasted exactly as Uptime Kuma
+displays it; any query string is replaced. Pushes use `curl`, which Trellis
+installs by default.
 
 Create one push monitor per scan type per environment. Set each heartbeat
 interval to 24 hours plus the observed maximum run time; vulnerability scans
@@ -236,10 +249,14 @@ change:
 
 - `wordfence_*_cron_hour` and `wordfence_*_cron_minute` are replaced by
   `wordfence_*_on_calendar`.
-- Scans run as `web_user` instead of root; `/var/cache/wordfence` changes owner.
+- Scans run as `web_user` instead of root. `/var/cache/wordfence` changes
+  owner, and `/etc/wordfence` and its INI become group-readable by
+  `web_group`.
 - Diagnostic logs are no longer uploaded to S3, and the `failed/` prefix is no
   longer written. Use journald instead.
 - Run scans manually with `systemctl start`, not by invoking the runner script.
+- Optional Uptime Kuma reporting is new; existing installs are unaffected
+  unless a push URL is set.
 
 Provisioning 2.x removes the 1.x cron entries and lock files and migrates
 ownership of the cache contents. Provision every host with a 2.x release before
