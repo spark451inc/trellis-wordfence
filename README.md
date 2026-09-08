@@ -5,6 +5,7 @@ An Ansible role that installs, configures, and schedules [Wordfence CLI](https:/
 ## Features
 
 - Installs Wordfence CLI from the precompiled binary (no Python/pip required)
+- Installs the native PCRE runtime required by malware scans (`libpcre3`)
 - Verifies the official binary against its pinned SHA-256 checksum
 - Installs a pinned, verified AWS CLI v2 release
 - Writes a system-wide configuration file at `/etc/wordfence/wordfence-cli.ini`
@@ -23,6 +24,10 @@ An Ansible role that installs, configures, and schedules [Wordfence CLI](https:/
 - A free or paid [Wordfence CLI license](https://www.wordfence.com/products/wordfence-cli/)
 - An existing S3 bucket and an EC2 instance profile that can write objects
   under the configured prefix
+
+The role installs `libpcre3` (PCRE1); `libpcre2-8-0` (PCRE2) does not
+provide the library Wordfence CLI needs. On Ubuntu 24.04, the `universe`
+APT component must be enabled so `libpcre3` is available.
 
 Provisioning this role causes scheduled and manually invoked runner scans to
 pass Wordfence CLI's `--accept-terms` option. Review the
@@ -46,7 +51,7 @@ roles:
   - name: wordfence
     src: git@github.com:spark451inc/Trellis-WordFence-Cli.git
     scm: git
-    version: v2.0.0
+    version: v2.0.1
 ```
 
 Pin `version` to an existing release tag. The machine running Trellis or
@@ -241,6 +246,22 @@ interval to 24 hours plus the observed maximum run time; vulnerability scans
 usually finish in minutes, while a malware scan on a host with many sites can
 take several hours. A missed heartbeat catches failures the runner cannot
 report, such as a disabled timer or an unreachable host.
+
+## Upgrading from 2.0.0
+
+Version 2.0.1 installs the missing `libpcre3` prerequisite for Wordfence CLI's
+malware scanner. Without it, Wordfence CLI 5.0.4 can report its version and
+run vulnerability scans but fail malware scans with
+`cannot import name 'PcrePattern' from 'wordfence.util.pcre'`.
+
+The dependency is installed even when the pinned Wordfence binary is already
+present. The CLI version remains 5.0.4; no PHP, scan option, or schedule
+changes are required.
+
+Change the `galaxy.yml` pin from `v2.0.0` to `v2.0.1` and re-provision
+each host with `--tags wordfence`
+(or `--tags wordfence-install` for only the installation phase). Running
+only `--tags wordfence-schedule` does not install the prerequisite.
 
 ## Upgrading from 1.x
 

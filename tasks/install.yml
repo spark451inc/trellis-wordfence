@@ -1,7 +1,10 @@
 ---
-- name: Install AWS CLI dependency
+- name: Install Wordfence CLI and AWS CLI dependencies
   ansible.builtin.apt:
-    name: unzip
+    name:
+      # Wordfence's malware scanner requires PCRE1, not PCRE2.
+      - libpcre3
+      - unzip
     state: present
     cache_valid_time: "{{ apt_cache_valid_time }}"
 
