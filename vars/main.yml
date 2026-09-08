@@ -1,0 +1,13 @@
+---
+# One systemd service/timer pair is rendered per entry.
+wordfence_scans:
+  - type: vuln-scan
+    unit: wordfence-vuln-scan
+    description: Wordfence CLI vulnerability scan
+    enabled: "{{ wordfence_vuln_scan_enabled }}"
+    on_calendar: "{{ wordfence_vuln_scan_on_calendar }}"
+  - type: malware-scan
+    unit: wordfence-malware-scan
+    description: Wordfence CLI malware scan
+    enabled: "{{ wordfence_malware_scan_enabled }}"
+    on_calendar: "{{ wordfence_malware_scan_on_calendar }}"

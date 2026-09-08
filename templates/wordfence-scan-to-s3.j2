@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -u
+set -uo pipefail
 
 if (($# != 1)); then
   printf 'Usage: %s {malware-scan|vuln-scan}\n' "$0" >&2
@@ -11,21 +11,25 @@ readonly scan_type="$1"
 readonly bucket={{ wordfence_s3_bucket | quote }}
 readonly environment={{ env | quote }}
 readonly prefix={{ wordfence_s3_prefix | regex_replace('^/+|/+$', '') | quote }}
+readonly started_at="${SECONDS}"
 
 case "$scan_type" in
   malware-scan)
     scan_suffix=
+    kuma_url={{ wordfence_malware_scan_uptime_kuma_push_url | quote }}
     ;;
   vuln-scan)
     scan_suffix=/wp
+    kuma_url={{ wordfence_vuln_scan_uptime_kuma_push_url | quote }}
     ;;
   *)
     printf 'Usage: %s {malware-scan|vuln-scan}\n' "$0" >&2
     exit 64
     ;;
 esac
-readonly scan_suffix
+readonly scan_suffix kuma_url
 
+# Rendered at provision time from wordpress_sites.
 scan_candidates=(
 {% for site, config in wordpress_sites | dictsort %}
   {{ (www_root ~ '/' ~ site ~ '/' ~
@@ -34,97 +38,98 @@ scan_candidates=(
 {% endfor %}
 )
 
-if ! read -r timestamp date_path < <(date -u '+%Y%m%dT%H%M%SZ %Y/%m/%d'); then
-  printf 'Failed to construct the S3 object key\n' >&2
-  exit 1
-fi
-readonly timestamp date_path
-readonly key_prefix="${prefix:+${prefix}/}${environment}/${scan_type}/${date_path}"
-readonly result_uri="s3://${bucket}/${key_prefix}/${timestamp}.csv"
-readonly log_uri="s3://${bucket}/${key_prefix}/${timestamp}.log"
-readonly failure_prefix="${prefix:+${prefix}/}${environment}/failed/${scan_type}/${date_path}"
+{# Nothing below is templated; raw mode keeps Jinja from reading bash's ${#array[@]} as a comment tag. #}
+{% raw %}
+log() {
+  printf 'wordfence %s: %s\n' "$scan_type" "$*"
+}
 
-if ! temp_dir="$(mktemp -d)"; then
-  printf 'Failed to create temporary scan directory\n' >&2
-  exit 1
-fi
-result_path="${temp_dir}/results.csv"
-log_path="${temp_dir}/diagnostics.log"
+notify_kuma() {
+  local status="$1"
+  local message="$2"
 
-cleanup() {
-  if ! rm -f "$result_path" "$log_path" || ! rmdir "$temp_dir"; then
-    printf 'Failed to remove temporary scan files at %s\n' "$temp_dir" >&2
+  [[ -n "$kuma_url" ]] || return 0
+
+  if ! /usr/bin/curl \
+    --fail \
+    --silent \
+    --show-error \
+    --max-time 15 \
+    --get \
+    --data-urlencode "status=${status}" \
+    --data-urlencode "msg=${message}" \
+    --data-urlencode "ping=$(((SECONDS - started_at) * 1000))" \
+    "${kuma_url%%\?*}" >/dev/null; then
+    log "WARNING: Uptime Kuma notification failed"
   fi
 }
-trap cleanup EXIT
 
-scan_status=0
-if ! exec 9>"/var/cache/wordfence/${scan_type}.lock"; then
-  printf 'Failed to open the Wordfence %s lock\n' "$scan_type" >> "$log_path"
-  scan_status=73
-else
-  lock_status=0
-  /usr/bin/flock --nonblock --conflict-exit-code 75 9 2>> "$log_path" ||
-    lock_status=$?
-  if ((lock_status == 75)); then
-    printf 'Another Wordfence %s is already running\n' "$scan_type" >> "$log_path"
-    scan_status=75
-  elif ((lock_status != 0)); then
-    printf 'Failed to acquire the Wordfence %s lock with status %d\n' \
-      "$scan_type" "$lock_status" >> "$log_path"
-    scan_status="$lock_status"
-  fi
+fail() {
+  local status="$1"
+  shift
+  log "ERROR: $*"
+  notify_kuma down "Wordfence ${scan_type} (${environment}) failed with status ${status}: $*"
+  exit "$status"
+}
+
+if ! read -r timestamp date_path < <(date -u '+%Y%m%dT%H%M%SZ %Y/%m/%d'); then
+  fail 1 "failed to construct the S3 object key"
 fi
+readonly result_uri="s3://${bucket}/${prefix:+${prefix}/}${environment}/${scan_type}/${date_path}/${timestamp}.csv"
 
-scan_arguments=()
-if ((scan_status == 0)); then
-  for candidate in "${scan_candidates[@]}"; do
-    path="${candidate}${scan_suffix}"
-    if [[ -d "$path" ]]; then
-      scan_arguments+=("$path")
-    else
-      printf 'Skipping unavailable scan path: %s\n' "$path" >> "$log_path"
-    fi
-  done
+if ! temp_dir="$(mktemp -d)"; then
+  fail 1 "failed to create a temporary results directory"
+fi
+readonly result_path="${temp_dir}/results.csv"
+trap 'rm -rf -- "$temp_dir"' EXIT
 
-  if [[ -z "${scan_arguments[0]+present}" ]]; then
-    printf 'No deployed WordPress sites are available to scan\n' >> "$log_path"
-    scan_status=66
+scan_paths=()
+missing=()
+for candidate in "${scan_candidates[@]}"; do
+  path="${candidate}${scan_suffix}"
+  if [[ -d "$path" ]]; then
+    scan_paths+=("$path")
   else
-    /usr/local/bin/wordfence "$scan_type" \
-      --configuration /etc/wordfence/wordfence-cli.ini \
-      --accept-terms \
-      --no-allow-io-errors \
-      --no-color \
-      --output-format csv \
-      --output-headers \
-      --output-path "$result_path" \
-      "${scan_arguments[@]}" 2>> "$log_path" ||
-      scan_status=$?
+    log "WARNING: skipping unavailable scan path: ${path}"
+    missing+=("$path")
   fi
+done
+
+skipped=
+if ((${#missing[@]} > 0)); then
+  skipped="; skipped ${#missing[@]} unavailable path(s)"
 fi
+
+if ((${#scan_paths[@]} == 0)); then
+  fail 66 "no deployed WordPress sites are available to scan${skipped}"
+fi
+
+log "Starting scan of ${#scan_paths[@]} path(s)${skipped}"
+
+# systemd signals the whole cgroup on timeout, so wordfence stops on its own;
+# the trap only keeps this script alive long enough to report the result.
+trap ':' TERM
+
+/usr/local/bin/wordfence "$scan_type" \
+  --configuration /etc/wordfence/wordfence-cli.ini \
+  --accept-terms \
+  --no-allow-io-errors \
+  --no-color \
+  --output-format csv \
+  --output-headers \
+  --output-path "$result_path" \
+  "${scan_paths[@]}"
+scan_status=$?
 
 if ((scan_status != 0)); then
-  failure_log_uri="s3://${bucket}/${failure_prefix}/${timestamp}-scan-${scan_status}.log"
-  if ! /usr/local/bin/aws s3 cp \
-    "$log_path" "$failure_log_uri" --only-show-errors; then
-    printf 'Wordfence %s failed and its diagnostic upload also failed\n' \
-      "$scan_type" >&2
-    exit 1
-  fi
-  printf 'Wordfence %s failed with status %d\n' \
-    "$scan_type" "$scan_status" >&2
-  exit "$scan_status"
+  fail "$scan_status" "Wordfence CLI exited with status ${scan_status}${skipped}"
 fi
 
-if ! /usr/local/bin/aws s3 cp \
-  "$log_path" "$log_uri" --only-show-errors; then
-  printf 'Failed to upload Wordfence %s diagnostics\n' "$scan_type" >&2
-  exit 1
+if ! /usr/local/bin/aws s3 cp "$result_path" "$result_uri" --only-show-errors; then
+  fail 1 "failed to upload results to ${result_uri}${skipped}"
 fi
 
-if ! /usr/local/bin/aws s3 cp \
-  "$result_path" "$result_uri" --only-show-errors; then
-  printf 'Failed to upload Wordfence %s results\n' "$scan_type" >&2
-  exit 1
-fi
+elapsed=$((SECONDS - started_at))
+log "Uploaded results to ${result_uri} in ${elapsed}s${skipped}"
+notify_kuma up "Wordfence ${scan_type} (${environment}) succeeded in ${elapsed}s${skipped}"
+{% endraw %}

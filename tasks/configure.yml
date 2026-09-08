@@ -4,24 +4,35 @@
     path: /etc/wordfence
     state: directory
     owner: root
-    group: root
-    mode: '0750'
+    group: "{{ web_group }}"
+    mode: "0750"
 
 - name: Ensure Wordfence CLI cache directory exists
   ansible.builtin.file:
     path: /var/cache/wordfence
     state: directory
-    owner: root
-    group: root
-    mode: '0750'
+    owner: "{{ web_user }}"
+    group: "{{ web_group }}"
+    mode: "0700"
+
+# Hosts provisioned with 1.x ran scans as root, so their cache contents are
+# root-owned. Ownership only; Wordfence manages file modes inside the 0700
+# directory. Remove this task in 3.0.0.
+- name: Migrate legacy Wordfence cache contents to the scan user
+  ansible.builtin.file:
+    path: /var/cache/wordfence
+    state: directory
+    owner: "{{ web_user }}"
+    group: "{{ web_group }}"
+    recurse: true
 
 - name: Write Wordfence CLI configuration file
   ansible.builtin.template:
     src: wordfence-cli.ini.j2
     dest: /etc/wordfence/wordfence-cli.ini
     owner: root
-    group: root
-    mode: '0640'
+    group: "{{ web_group }}"
+    mode: "0640"
   no_log: true
 
 - name: Install Wordfence S3 scan runner
@@ -29,6 +40,6 @@
     src: wordfence-scan-to-s3.j2
     dest: /usr/local/sbin/wordfence-scan-to-s3
     owner: root
-    group: root
+    group: "{{ web_group }}"
     mode: "0750"
     validate: /usr/bin/bash -n %s

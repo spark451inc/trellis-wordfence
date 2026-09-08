@@ -1,18 +1,61 @@
 ---
-- name: Schedule Wordfence CLI malware scan
+# Hosts provisioned with 1.x scheduled root cron jobs guarded by lock files
+# (a shared scan.lock in 1.0.0, one per scan type from 1.0.1).
+# Remove these two cleanup tasks in 3.0.0, together with the cache ownership
+# migration in configure.yml.
+- name: Remove legacy Wordfence cron jobs
   ansible.builtin.cron:
-    name: "Wordfence CLI malware scan"
+    name: "{{ item }}"
     user: root
-    minute: "{{ wordfence_malware_scan_cron_minute }}"
-    hour: "{{ wordfence_malware_scan_cron_hour }}"
-    job: /usr/local/sbin/wordfence-scan-to-s3 malware-scan
-    state: "{{ wordfence_malware_scan_enabled | ternary('present', 'absent') }}"
+    state: absent
+  loop:
+    - Wordfence CLI malware scan
+    - Wordfence CLI vulnerability scan
 
-- name: Schedule Wordfence CLI vulnerability scan
-  ansible.builtin.cron:
-    name: "Wordfence CLI vulnerability scan"
-    user: root
-    minute: "{{ wordfence_vuln_scan_cron_minute }}"
-    hour: "{{ wordfence_vuln_scan_cron_hour }}"
-    job: /usr/local/sbin/wordfence-scan-to-s3 vuln-scan
-    state: "{{ wordfence_vuln_scan_enabled | ternary('present', 'absent') }}"
+- name: Remove legacy Wordfence lock files
+  ansible.builtin.file:
+    path: "/var/cache/wordfence/{{ item }}"
+    state: absent
+  loop:
+    - scan.lock
+    - malware-scan.lock
+    - vuln-scan.lock
+
+- name: Install Wordfence scan services
+  ansible.builtin.template:
+    src: wordfence-scan.service.j2
+    dest: "/etc/systemd/system/{{ scan.unit }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ wordfence_scans }}"
+  loop_control:
+    loop_var: scan
+    label: "{{ scan.unit }}"
+  notify: Reload systemd and restart Wordfence scan timers
+
+- name: Install Wordfence scan timers
+  ansible.builtin.template:
+    src: wordfence-scan.timer.j2
+    dest: "/etc/systemd/system/{{ scan.unit }}.timer"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ wordfence_scans }}"
+  loop_control:
+    loop_var: scan
+    label: "{{ scan.unit }}"
+  notify: Reload systemd and restart Wordfence scan timers
+
+- name: Apply Wordfence systemd unit changes
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable or disable Wordfence scan timers
+  ansible.builtin.systemd:
+    name: "{{ scan.unit }}.timer"
+    enabled: "{{ scan.enabled | bool }}"
+    state: "{{ (scan.enabled | bool) | ternary('started', 'stopped') }}"
+  loop: "{{ wordfence_scans }}"
+  loop_control:
+    loop_var: scan
+    label: "{{ scan.unit }}"

@@ -1,0 +1,16 @@
+---
+- name: Reload systemd for Wordfence scan units
+  ansible.builtin.systemd:
+    daemon_reload: true
+  listen: Reload systemd and restart Wordfence scan timers
+
+- name: Restart enabled Wordfence scan timers
+  ansible.builtin.systemd:
+    name: "{{ scan.unit }}.timer"
+    state: restarted
+  loop: "{{ wordfence_scans }}"
+  loop_control:
+    loop_var: scan
+    label: "{{ scan.unit }}"
+  when: scan.enabled | bool
+  listen: Reload systemd and restart Wordfence scan timers
