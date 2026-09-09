@@ -1,6 +1,16 @@
-# Trellis-WordFence-Cli
+# trellis-wordfence
 
-An Ansible role that installs, configures, and schedules [Wordfence CLI](https://github.com/wordfence/wordfence-cli) on [Roots Trellis](https://roots.io/trellis/)-managed WordPress servers.
+An Ansible role that installs, configures, and schedules
+[Wordfence CLI](https://github.com/wordfence/wordfence-cli) on
+[Roots Trellis](https://roots.io/trellis/)-managed WordPress servers on AWS EC2,
+with scan reports uploaded to S3.
+
+This is an independent integration by [Spark451](https://www.spark451.com/),
+not an official Roots or Wordfence project. It depends on Trellis's inventory
+and variables; it is not a standalone WordPress role.
+
+> Public GitHub access, the Galaxy listing, and the `v2.0.2` release are
+> pending. The installation examples below target that release.
 
 ## Features
 
@@ -19,11 +29,19 @@ An Ansible role that installs, configures, and schedules [Wordfence CLI](https:/
 
 ## Requirements
 
-- Trellis-managed Ubuntu server with systemd
+- Trellis-managed EC2 instance with systemd (`x86_64` or `aarch64`)
 - Ansible ≥ 2.10
 - A free or paid [Wordfence CLI license](https://www.wordfence.com/products/wordfence-cli/)
 - An existing S3 bucket and an EC2 instance profile that can write objects
   under the configured prefix
+
+Trellis supplies `wordpress_sites`, `www_root`, `web_user`, `web_group`,
+`apt_cache_valid_time`, and `env`. AWS CLI uses the instance profile for
+authentication; this role does not create the bucket or configure IAM.
+S3 uploads are required, not an optional reporting backend.
+
+Trellis handles platform provisioning. The Ubuntu 24.04 notes below document
+that environment rather than impose a required OS version.
 
 The role installs `libpcre3` (PCRE1); `libpcre2-8-0` (PCRE2) does not
 provide the library Wordfence CLI needs. On Ubuntu 24.04, the `universe`
@@ -42,21 +60,35 @@ provisioning.
 
 ### 1. Add the role to `galaxy.yml`
 
-Add the private Git repository under the existing `roles:` key in Trellis's
-`galaxy.yml`:
+Add the role under the existing `roles:` key in Trellis's `galaxy.yml`.
+Choose either Galaxy or the public Git repository, not both.
+
+From Ansible Galaxy:
 
 ```yaml
 roles:
   # Existing Trellis roles...
   - name: wordfence
-    src: git@github.com:spark451inc/Trellis-WordFence-Cli.git
-    scm: git
-    version: v2.0.1
+    src: spark451inc.trellis_wordfence
+    version: v2.0.2
 ```
 
-Pin `version` to an existing release tag. The machine running Trellis or
-Ansible must have SSH access to the private GitHub repository.
-`trellis provision` installs entries from `galaxy.yml` automatically.
+Alternatively, directly from GitHub over HTTPS:
+
+```yaml
+roles:
+  # Existing Trellis roles...
+  - name: wordfence
+    src: https://github.com/spark451inc/trellis-wordfence.git
+    scm: git
+    version: v2.0.2
+```
+
+Keep `name: wordfence`: it is the local installation alias used by the
+`server.yml` example below, regardless of the GitHub or Galaxy name.
+Pin `version` to a published release tag. Public downloads do not require
+GitHub SSH access. `trellis provision` installs entries from `galaxy.yml`
+automatically.
 
 ### 2. Add the role to `server.yml`
 
@@ -247,6 +279,16 @@ usually finish in minutes, while a malware scan on a host with many sites can
 take several hours. A missed heartbeat catches failures the runner cannot
 report, such as a disabled timer or an unreachable host.
 
+## Upgrading from 2.0.1
+
+Version 2.0.2 updates the project name, public installation instructions,
+license notices, and Galaxy metadata. Scan behavior, CLI versions, role
+variables, and systemd unit names are unchanged.
+
+Update the source and version in `galaxy.yml` using one of the examples above.
+Keep the local alias `name: wordfence` so the existing `server.yml` role entry
+does not need to change.
+
 ## Upgrading from 2.0.0
 
 Version 2.0.1 installs the missing `libpcre3` prerequisite for Wordfence CLI's
@@ -258,7 +300,7 @@ The dependency is installed even when the pinned Wordfence binary is already
 present. The CLI version remains 5.0.4; no PHP, scan option, or schedule
 changes are required.
 
-Change the `galaxy.yml` pin from `v2.0.0` to `v2.0.1` and re-provision
+Change the `galaxy.yml` pin from `v2.0.0` to `v2.0.2` and re-provision
 each host with `--tags wordfence`
 (or `--tags wordfence-install` for only the installation phase). Running
 only `--tags wordfence-schedule` does not install the prerequisite.
@@ -285,4 +327,18 @@ upgrading to 3.0.0, which drops that cleanup.
 
 ## License
 
-[GPL-2.0-or-later](LICENSE)
+Copyright (C) 2026 JenSpark, Inc. d/b/a Spark451
+
+This role is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 2 of the License, or (at your option) any later
+version. See [LICENSE](LICENSE). SPDX identifier: `GPL-2.0-or-later`.
+
+This role is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
+A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+This license covers the role's source code, templates, and documentation.
+Wordfence CLI, AWS CLI, and Trellis retain their own licenses; their code and
+binaries are not bundled in this repository. Users must obtain their own
+Wordfence CLI license for access to its signature service.

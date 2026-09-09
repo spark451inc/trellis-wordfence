@@ -1,10 +1,11 @@
 ---
 galaxy_info:
-  role_name: wordfence
+  namespace: spark451inc
+  role_name: trellis_wordfence
   author: spark451inc
   description: >-
-    Install, configure, and schedule Wordfence CLI scans on a
-    Trellis-managed WordPress server
+    Install and schedule Wordfence CLI scans on Trellis-managed AWS EC2
+    servers and upload CSV reports to S3
   company: Spark451
 
   license: GPL-2.0-or-later
@@ -18,5 +19,7 @@ galaxy_info:
     - trellis
     - malware
     - scanning
+    - aws
+    - s3
 
 dependencies: []
