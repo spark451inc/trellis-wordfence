@@ -9,8 +9,8 @@ This is an independent integration by [Spark451](https://www.spark451.com/),
 not an official Roots or Wordfence project. It depends on Trellis's inventory
 and variables; it is not a standalone WordPress role.
 
-> Public GitHub access, the Galaxy listing, and the `v2.0.2` release are
-> pending. The installation examples below target that release.
+> The Galaxy listing and `v2.0.2` release are pending. The installation
+> examples below target that release.
 
 ## Features
 
