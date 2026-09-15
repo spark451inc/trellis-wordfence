@@ -9,9 +9,6 @@ This is an independent integration by [Spark451](https://www.spark451.com/),
 not an official Roots or Wordfence project. It depends on Trellis's inventory
 and variables; it is not a standalone WordPress role.
 
-> The Galaxy listing and `v2.0.2` release are pending. The installation
-> examples below target that release.
-
 ## Features
 
 - Installs Wordfence CLI from the precompiled binary (no Python/pip required)
@@ -63,7 +60,8 @@ provisioning.
 Add the role under the existing `roles:` key in Trellis's `galaxy.yml`.
 Choose either Galaxy or the public Git repository, not both.
 
-From Ansible Galaxy:
+From Ansible Galaxy
+([`spark451inc.trellis_wordfence`](https://galaxy.ansible.com/ui/standalone/roles/spark451inc/trellis_wordfence/)):
 
 ```yaml
 roles:
