@@ -1,327 +1,126 @@
 # trellis-wordfence
 
-An Ansible role that installs, configures, and schedules
-[Wordfence CLI](https://github.com/wordfence/wordfence-cli) on
-[Roots Trellis](https://roots.io/trellis/)-managed WordPress servers on AWS EC2,
-with scan reports uploaded to S3.
+> **Wordfence CLI is end-of-life.** Version 3.0.0 is the final release of this
+> role. It no longer installs or schedules anything; it removes everything
+> earlier releases put on a server. Run it once on every host, then remove the
+> role from Trellis.
 
-This is an independent integration by [Spark451](https://www.spark451.com/),
-not an official Roots or Wordfence project. It depends on Trellis's inventory
-and variables; it is not a standalone WordPress role.
+An Ansible role for [Roots Trellis](https://roots.io/trellis/)-managed
+WordPress servers. Releases 1.x and 2.x installed
+[Wordfence CLI](https://github.com/wordfence/wordfence-cli), scheduled scans,
+and uploaded reports to S3. This independent integration by
+[Spark451](https://www.spark451.com/) is not an official Roots or Wordfence
+project.
 
-## Features
+## What 3.0.0 Removes
 
-- Installs Wordfence CLI from the precompiled binary (no Python/pip required)
-- Installs the native PCRE runtime required by malware scans (`libpcre3`)
-- Verifies the official binary against its pinned SHA-256 checksum
-- Installs a pinned, verified AWS CLI v2 release
-- Writes a system-wide configuration file at `/etc/wordfence/wordfence-cli.ini`
-- Schedules daily **malware scans** and **vulnerability scans** as systemd
-  timers, one service per scan type so same-type runs cannot overlap
-- Runs scans unprivileged as Trellis's `web_user` with reduced CPU and I/O
-  priority and a hardened systemd sandbox
-- Uploads CSV results to an existing S3 bucket; run output goes to journald
-- Optionally reports each run to an Uptime Kuma push monitor
-- Accepts the Wordfence CLI license terms for noninteractive scheduled scans
+Every task is idempotent and a no-op where nothing is installed, so it is safe
+on any host, including ones upgrading directly from 1.x or pre-release builds.
 
-## Requirements
+- The `wordfence-vuln-scan` and `wordfence-malware-scan` systemd timers and
+  services: stopped, disabled, deleted, failed state cleared, and their
+  `Persistent=true` timer stamps removed. A scan that is running is stopped.
+- The 1.x root cron jobs `Wordfence CLI malware scan` and
+  `Wordfence CLI vulnerability scan`, plus any scan they started that is still
+  running (sent `SIGTERM`, then `SIGKILL` after 30 seconds)
+- `/usr/local/bin/wordfence` and the `/usr/local/sbin/wordfence-scan-to-s3`
+  runner
+- `/etc/wordfence` (including the license key), `/var/cache/wordfence`, and the
+  pre-1.0 `/var/log/wordfence`, `/var/lock/wordfence`, and
+  `/etc/logrotate.d/wordfence`
+- `~/.config/wordfence` and `~/.cache/wordfence` for root and every `/home`
+  user, which manual `wordfence` runs can create with the license key inside
+- Interrupted-install leftovers in `/usr/local/bin` and `/tmp`, and a pre-1.0
+  `wordfence` APT package or `pip3`-installed `wordfence` if present (its
+  Python dependencies are left in place because other software may share them)
+- **AWS CLI v2** (`/usr/local/bin/aws`, `/usr/local/bin/aws_completer`,
+  `/usr/local/aws-cli`), unconditionally. If anything else on the server uses
+  it, install it separately after decommissioning.
+- `libpcre3`, only if APT confirms nothing else depends on it; otherwise it is
+  marked automatically installed so a later `apt autoremove` can clean it up
 
-- Trellis-managed EC2 instance with systemd (`x86_64` or `aarch64`)
-- Ansible ≥ 2.10
-- A free or paid [Wordfence CLI license](https://www.wordfence.com/products/wordfence-cli/)
-- An existing S3 bucket and an EC2 instance profile that can write objects
-  under the configured prefix
+The role takes no variables and no longer needs a license, S3 bucket, or any
+Trellis variables.
 
-Trellis supplies `wordpress_sites`, `www_root`, `web_user`, `web_group`,
-`apt_cache_valid_time`, and `env`. AWS CLI uses the instance profile for
-authentication; this role does not create the bucket or configure IAM.
-S3 uploads are required, not an optional reporting backend.
+### Not Removed
 
-Trellis handles platform provisioning. The Ubuntu 24.04 notes below document
-that environment rather than impose a required OS version.
+- `unzip`, which 2.x also installed but Composer uses during Bedrock deploys
+- Past scan output in journald, which ages out under the journal's retention
+  policy
+- Anything off the server; see [Clean Up Elsewhere](#4-clean-up-elsewhere)
 
-The role installs `libpcre3` (PCRE1); `libpcre2-8-0` (PCRE2) does not
-provide the library Wordfence CLI needs. On Ubuntu 24.04, the `universe`
-APT component must be enabled so `libpcre3` is available.
+## Decommissioning
 
-Provisioning this role causes scheduled and manually invoked runner scans to
-pass Wordfence CLI's `--accept-terms` option. Review the
-[Wordfence CLI license terms](https://www.wordfence.com/wordfence-cli-license-terms-and-conditions/)
-before deploying the role.
+### 1. Pin 3.0.0 in `galaxy.yml`
 
-## Wire into Trellis
-
-Trellis provisions custom roles from the main play in `server.yml`. Add this
-role there so it runs automatically during normal staging and production
-provisioning.
-
-### 1. Add the role to `galaxy.yml`
-
-Add the role under the existing `roles:` key in Trellis's `galaxy.yml`.
-Choose either Galaxy or the public Git repository, not both.
-
-From Ansible Galaxy
-([`spark451inc.trellis_wordfence`](https://galaxy.ansible.com/ui/standalone/roles/spark451inc/trellis_wordfence/)):
+Keep the existing source and local alias `name: wordfence`; change only the
+version:
 
 ```yaml
 roles:
-  # Existing Trellis roles...
   - name: wordfence
     src: spark451inc.trellis_wordfence
-    version: v2.0.2
+    version: v3.0.0
 ```
 
-Alternatively, directly from GitHub over HTTPS:
+or, from GitHub:
 
 ```yaml
 roles:
-  # Existing Trellis roles...
   - name: wordfence
     src: https://github.com/spark451inc/trellis-wordfence.git
     scm: git
-    version: v2.0.2
+    version: v3.0.0
 ```
 
-Keep `name: wordfence`: it is the local installation alias used by the
-`server.yml` example below, regardless of the GitHub or Galaxy name.
-Pin `version` to a published release tag. Public downloads do not require
-GitHub SSH access. `trellis provision` installs entries from `galaxy.yml`
-automatically.
+Leave `{ role: wordfence, tags: [wordfence] }` in `server.yml` for now.
 
-### 2. Add the role to `server.yml`
-
-In the main `WordPress Server` play, append Wordfence to the existing `roles`
-list:
-
-```yaml
-roles:
-  # Existing Trellis roles...
-  - { role: wordpress-setup, tags: [wordpress, wordpress-setup, letsencrypt] }
-  - { role: wordfence, tags: [wordfence] }
-```
-
-Trellis upgrades may change `server.yml`; preserve this role entry when merging
-upstream changes.
-
-### 3. Configure each environment
-
-Add the license, and optionally the Uptime Kuma push URLs, to each
-environment's encrypted vault file:
-
-```yaml
-# group_vars/production/vault.yml
-vault_wordfence_license: "your-license-key-here"
-
-# Optional; one push monitor per scan type per environment
-vault_wordfence_vuln_scan_uptime_kuma_push_url: "https://kuma.example.com/api/push/abc123"
-vault_wordfence_malware_scan_uptime_kuma_push_url: "https://kuma.example.com/api/push/def456"
-```
-
-Repeat this in `group_vars/staging/vault.yml` with that environment's own
-values. Then configure the existing S3 bucket in both
-`group_vars/production/wordfence.yml` and `group_vars/staging/wordfence.yml`:
-
-```yaml
-# Existing destination bucket; do not include s3://
-wordfence_s3_bucket: example-security-reports
-wordfence_s3_prefix: wordfence
-
-# systemd calendar expressions (defaults: 01:00 and 02:00 daily)
-wordfence_vuln_scan_on_calendar: "*-*-* 01:00:00"
-wordfence_malware_scan_on_calendar: "*-*-* 02:00:00"
-
-# Optional Uptime Kuma push monitors; omit or leave empty to disable
-wordfence_vuln_scan_uptime_kuma_push_url: "{{ vault_wordfence_vuln_scan_uptime_kuma_push_url }}"
-wordfence_malware_scan_uptime_kuma_push_url: "{{ vault_wordfence_malware_scan_uptime_kuma_push_url }}"
-```
-
-Values shared by staging and production can instead live in
-`group_vars/all/wordfence.yml`, but Uptime Kuma push URLs identify a single
-monitor, so keep them per environment. Provisioning stops before configuration
-if the resolved environment license is blank.
-
-### 4. Provision Trellis
-
-Normal Trellis provisioning now runs the Wordfence role automatically:
+### 2. Provision every environment
 
 ```bash
-trellis provision staging
-trellis provision production
-
-# Run only this role:
 trellis provision --tags wordfence staging
 trellis provision --tags wordfence production
 ```
 
-The role also tags its phases individually as `wordfence-install`,
-`wordfence-configure`, and `wordfence-schedule`, so for example
-`--tags wordfence-schedule` re-renders only the systemd units and timers.
-
-Without Trellis CLI, run the same `server.yml` play directly:
+Without Trellis CLI:
 
 ```bash
 ansible-galaxy install --force -r galaxy.yml
-ansible-playbook server.yml -e env=staging
-ansible-playbook server.yml -e env=production
+ansible-playbook server.yml -e env=staging --tags wordfence
+ansible-playbook server.yml -e env=production --tags wordfence
 ```
 
-The Trellis `env` value is embedded in the managed runner; it separates S3
-objects by environment and is included in Uptime Kuma messages. Provision
-staging with `-e env=staging` and production with `-e env=production`.
+The 2.x phase tags (`wordfence-install`, `wordfence-configure`,
+`wordfence-schedule`) no longer exist; use `wordfence`. Include every host
+that ever ran this role, including development or retired-but-running hosts.
 
-## Role Variables
-
-Defaults are defined in [`defaults/main.yml`](defaults/main.yml).
-
-| Variable | Default | Description |
-|---|---|---|
-| `wordfence_version` | `5.0.4` | Wordfence CLI version to install |
-| `wordfence_checksums` | Architecture-specific SHA-256 values | Checksums published with the pinned release |
-| `wordfence_aws_cli_version` | `2.36.30` | AWS CLI v2 version to install |
-| `wordfence_aws_cli_checksums` | Architecture-specific SHA-256 values | Checksums verified against AWS-signed installers |
-| `wordfence_license` | `""` | License key (use vault) |
-| `wordfence_s3_bucket` | `""` | Existing destination bucket; required |
-| `wordfence_s3_prefix` | `wordfence` | Object-key prefix; surrounding slashes are removed |
-| `wordfence_vuln_scan_enabled` | `true` | Enable the vulnerability scan timer |
-| `wordfence_vuln_scan_on_calendar` | `*-*-* 01:00:00` | systemd `OnCalendar` expression for the vulnerability scan |
-| `wordfence_vuln_scan_uptime_kuma_push_url` | `""` | Optional Uptime Kuma push URL for the vulnerability scan |
-| `wordfence_malware_scan_enabled` | `true` | Enable the malware scan timer |
-| `wordfence_malware_scan_on_calendar` | `*-*-* 02:00:00` | systemd `OnCalendar` expression for the malware scan |
-| `wordfence_malware_scan_uptime_kuma_push_url` | `""` | Optional Uptime Kuma push URL for the malware scan |
-
-Schedules use [systemd calendar syntax](https://www.freedesktop.org/software/systemd/man/latest/systemd.time.html#Calendar%20Events);
-check an expression with `systemd-analyze calendar '<expression>'`. An invalid
-expression fails provisioning when the timer is started.
-
-## Scheduled Scans
-
-Scan paths are derived from Trellis's `wordpress_sites` inventory, including
-each site's supported `current_path` and `public_path` overrides. With Trellis
-defaults, malware scans cover `/srv/www/<site>/current/web`; vulnerability
-scans target `/srv/www/<site>/current/web/wp`. Wordfence automatically
-recognizes Bedrock's adjacent `web/app` content directory.
-
-The runner skips inventory sites that do not yet have their active deployment
-path and logs each skipped path. If no deployed sites remain, the run fails
-with status 66 and uploads nothing.
-
-Vulnerability scans run daily at 01:00 and malware scans at 02:00 by default.
-Each scan type is its own systemd service and timer:
-
-| Scan | Service | Timer |
-|---|---|---|
-| Vulnerability | `wordfence-vuln-scan.service` | `wordfence-vuln-scan.timer` |
-| Malware | `wordfence-malware-scan.service` | `wordfence-malware-scan.timer` |
-
-systemd never starts a second instance of a service that is still running, so
-same-type scans cannot overlap; malware and vulnerability scans may run
-concurrently. Timers use `Persistent=true`, so a run missed while the server
-was off starts at the next boot. Each service has a 20 hour `TimeoutStartSec`
-so a wedged scan is killed before the next day's run. Provisioning only
-enables, starts, or restarts the timers and never starts a service. Disabling a
-scan type stops and disables its timer but leaves the service installed for
-manual runs.
-
-Each service runs as `web_user:web_group` with `Nice=10`, best-effort I/O
-priority 7, a private temporary directory, and a read-only system view except
-for `/var/cache/wordfence`. The Wordfence license in
-`/etc/wordfence/wordfence-cli.ini` is therefore readable by `web_group`, the
-same group PHP-FPM runs as.
-
-Each scan writes its CSV results to a temporary directory and uploads them as
-the success marker. Run output, including Wordfence CLI's own messages, goes to
-journald.
-
-```text
-wordfence/<environment>/<scan-type>/YYYY/MM/DD/<timestamp>.csv
-```
-
-This environment-only layout assumes one scanning host per environment.
-Multiple hosts in the same environment can generate the same timestamped key.
-
-Scheduled scan reports use CSV so every successful results object has a stable
-format and `.csv` extension.
-
-## Running a Scan Manually
-
-Start the service rather than the runner script so the run is serialized and
-logged like a scheduled one. `systemctl start` blocks until the scan finishes;
-add `--no-block` to return immediately.
+To confirm, these should print nothing:
 
 ```bash
-sudo systemctl start wordfence-malware-scan.service
-sudo journalctl -fu wordfence-malware-scan.service
+systemctl list-units --all 'wordfence*' --no-legend
+sudo crontab -l 2>/dev/null | grep -i wordfence
+sudo find / -xdev -iname '*wordfence*' 2>/dev/null
 ```
 
-Inspect schedules and recent runs with:
+### 3. Remove the role from Trellis
 
-```bash
-sudo systemctl list-timers 'wordfence-*'
-sudo journalctl -u wordfence-vuln-scan.service -u wordfence-malware-scan.service
-```
+After every host has been provisioned with 3.0.0:
 
-## Monitoring with Uptime Kuma
+- Delete the `wordfence` entry from `server.yml` and `galaxy.yml`.
+- Delete `group_vars/*/wordfence.yml` and the `vault_wordfence_license` and
+  `vault_wordfence_*_uptime_kuma_push_url` entries from each environment's
+  `vault.yml`.
 
-When a push URL is configured, the runner reports `up` only after the scan
-succeeded and its CSV was uploaded, and `down` with the exit status and reason
-for any other outcome. Every push includes `ping=` with the run duration in
-milliseconds, so the monitor's response-time graph tracks how long each scan
-takes. Findings in the CSV do not affect the status; Kuma tracks whether the
-scan ran, not what it found. The URL may be pasted exactly as Uptime Kuma
-displays it; any query string is replaced. Pushes use `curl`, which Trellis
-installs by default.
+### 4. Clean up elsewhere
 
-Create one push monitor per scan type per environment. Set each heartbeat
-interval to 24 hours plus the observed maximum run time; vulnerability scans
-usually finish in minutes, while a malware scan on a host with many sites can
-take several hours. A missed heartbeat catches failures the runner cannot
-report, such as a disabled timer or an unreachable host.
+The role cannot reach these:
 
-## Upgrading from 2.0.1
-
-Version 2.0.2 updates the project name, public installation instructions,
-license notices, and Galaxy metadata. Scan behavior, CLI versions, role
-variables, and systemd unit names are unchanged.
-
-Update the source and version in `galaxy.yml` using one of the examples above.
-Keep the local alias `name: wordfence` so the existing `server.yml` role entry
-does not need to change.
-
-## Upgrading from 2.0.0
-
-Version 2.0.1 installs the missing `libpcre3` prerequisite for Wordfence CLI's
-malware scanner. Without it, Wordfence CLI 5.0.4 can report its version and
-run vulnerability scans but fail malware scans with
-`cannot import name 'PcrePattern' from 'wordfence.util.pcre'`.
-
-The dependency is installed even when the pinned Wordfence binary is already
-present. The CLI version remains 5.0.4; no PHP, scan option, or schedule
-changes are required.
-
-Change the `galaxy.yml` pin from `v2.0.0` to `v2.0.2` and re-provision
-each host with `--tags wordfence`
-(or `--tags wordfence-install` for only the installation phase). Running
-only `--tags wordfence-schedule` does not install the prerequisite.
-
-## Upgrading from 1.x
-
-Version 2.0.0 replaces root cron jobs with systemd timers and is a breaking
-change:
-
-- `wordfence_*_cron_hour` and `wordfence_*_cron_minute` are replaced by
-  `wordfence_*_on_calendar`.
-- Scans run as `web_user` instead of root. `/var/cache/wordfence` changes
-  owner, and `/etc/wordfence` and its INI become group-readable by
-  `web_group`.
-- Diagnostic logs are no longer uploaded to S3, and the `failed/` prefix is no
-  longer written. Use journald instead.
-- Run scans manually with `systemctl start`, not by invoking the runner script.
-- Optional Uptime Kuma reporting is new; existing installs are unaffected
-  unless a push URL is set.
-
-Provisioning 2.x removes the 1.x cron entries and lock files and migrates
-ownership of the cache contents. Provision every host with a 2.x release before
-upgrading to 3.0.0, which drops that cleanup.
+- **Uptime Kuma:** delete or pause the Wordfence push monitors, or they will
+  start alerting once heartbeats stop.
+- **S3 and IAM:** decide whether to keep or delete the reports under the
+  `wordfence/` prefix, and remove the instance-profile permission to write
+  there.
+- **Wordfence license:** cancel or revoke it in your Wordfence account.
 
 ## License
 
@@ -336,7 +135,6 @@ This role is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
 A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
-This license covers the role's source code, templates, and documentation.
-Wordfence CLI, AWS CLI, and Trellis retain their own licenses; their code and
-binaries are not bundled in this repository. Users must obtain their own
-Wordfence CLI license for access to its signature service.
+This license covers the role's source code and documentation. Wordfence CLI,
+AWS CLI, and Trellis retain their own licenses; their code and binaries are
+not bundled in this repository.

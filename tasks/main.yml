@@ -1,39 +1,215 @@
 ---
-- name: Validate Wordfence license
-  ansible.builtin.assert:
-    that:
-      - wordfence_license is string
-      - wordfence_license | string | trim | length > 0
-    fail_msg: wordfence_license must contain a Wordfence CLI license key.
-  tags: [wordfence, wordfence-configure]
+# 3.0.0 only removes what earlier releases (including pre-1.0 builds) put on
+# a host. Every task is idempotent and a no-op on hosts that never ran it.
 
-- name: Validate S3 destination
-  ansible.builtin.assert:
-    that:
-      - wordfence_s3_bucket | length > 0
-      - not wordfence_s3_bucket.startswith('s3://')
-      - "'/' not in wordfence_s3_bucket"
-    fail_msg: >-
-      wordfence_s3_bucket must contain an existing S3 bucket name, not an S3 URI.
-  tags: [wordfence, wordfence-configure]
+- name: Find Wordfence systemd units
+  ansible.builtin.find:
+    paths: /etc/systemd/system
+    patterns:
+      - wordfence-*.service
+      - wordfence-*.timer
+    file_type: any
+    recurse: true
+  register: wordfence_unit_files
+  tags: [wordfence]
 
-- name: Validate Trellis site inventory
-  ansible.builtin.assert:
-    that:
-      - wordpress_sites is defined
-      - wordpress_sites is mapping
-      - wordpress_sites | length > 0
-    fail_msg: wordpress_sites must contain at least one Bedrock site.
-  tags: [wordfence, wordfence-configure]
+- name: Set Wordfence systemd unit names
+  ansible.builtin.set_fact:
+    _wordfence_units: >-
+      {{ wordfence_unit_files.files | map(attribute='path')
+      | map('basename') | unique | sort(reverse=true) }}
+  tags: [wordfence]
 
-- name: Install Wordfence CLI
-  ansible.builtin.import_tasks: install.yml
-  tags: [wordfence, wordfence-install]
+# Reverse sort stops timers before their services so nothing is re-triggered.
+- name: Stop and disable Wordfence systemd units
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: "{{ false if item is match('.*\\.timer$') else omit }}"
+  loop: "{{ _wordfence_units }}"
+  tags: [wordfence]
 
-- name: Configure Wordfence CLI
-  ansible.builtin.import_tasks: configure.yml
-  tags: [wordfence, wordfence-configure]
+- name: Remove Wordfence systemd unit files
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ wordfence_unit_files.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  register: wordfence_units_removed
+  tags: [wordfence]
 
-- name: Schedule Wordfence CLI scans
-  ansible.builtin.import_tasks: schedule.yml
-  tags: [wordfence, wordfence-schedule]
+# Reload inline: reset-failed below needs the units unloaded first.
+- name: Reload systemd after removing Wordfence units  # noqa: no-handler
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: wordfence_units_removed is changed
+  tags: [wordfence]
+
+- name: Clear failed state of removed Wordfence units
+  ansible.builtin.command:
+    argv: "{{ ['systemctl', 'reset-failed'] + [item] }}"
+  loop: "{{ _wordfence_units }}"
+  changed_when: false
+  failed_when: false
+  tags: [wordfence]
+
+- name: Remove Wordfence cron jobs
+  ansible.builtin.cron:
+    name: "{{ item }}"
+    user: root
+    state: absent
+  loop:
+    - Wordfence CLI malware scan
+    - Wordfence CLI vulnerability scan
+  tags: [wordfence]
+
+# 1.x cron scans run outside systemd, so stopping units does not end them.
+- name: Stop running Wordfence scans started outside systemd
+  ansible.builtin.command:
+    argv: [pkill, --full, "{{ _wordfence_process_pattern }}"]
+  vars:
+    _wordfence_process_pattern: &wordfence_process_pattern >-
+      /usr/local/(sbin/wordfence-scan-to-s3|bin/wordfence)( |$)
+  register: wordfence_pkill
+  changed_when: wordfence_pkill.rc == 0
+  failed_when: wordfence_pkill.rc > 1
+  tags: [wordfence]
+
+- name: Wait for Wordfence scans to exit
+  ansible.builtin.command:
+    argv: [pgrep, --full, "{{ _wordfence_process_pattern }}"]
+  vars:
+    _wordfence_process_pattern: *wordfence_process_pattern
+  register: wordfence_pgrep
+  until: wordfence_pgrep.rc == 1
+  retries: 10
+  delay: 3
+  changed_when: false
+  failed_when: false
+  when: wordfence_pkill.rc == 0
+  tags: [wordfence]
+
+- name: Kill Wordfence scans that ignored SIGTERM
+  ansible.builtin.command:
+    argv: [pkill, --signal, KILL, --full, "{{ _wordfence_process_pattern }}"]
+  vars:
+    _wordfence_process_pattern: *wordfence_process_pattern
+  register: wordfence_pkill_kill
+  changed_when: wordfence_pkill_kill.rc == 0
+  failed_when: wordfence_pkill_kill.rc > 1
+  when: wordfence_pgrep.rc | default(1) == 0
+  tags: [wordfence]
+
+- name: Purge pre-1.0 Wordfence CLI package
+  ansible.builtin.apt:
+    name: wordfence
+    state: absent
+    purge: true
+  tags: [wordfence]
+
+# Pre-1.0 builds ran `pip3 install wordfence` into the system Python. Its
+# dependencies may be shared, so only the wordfence distribution is removed.
+- name: Check for a pip-installed Wordfence CLI
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - import importlib.metadata as m; m.version('wordfence')
+  register: wordfence_pip_check
+  changed_when: false
+  failed_when: false
+  tags: [wordfence]
+
+- name: Uninstall pip-installed Wordfence CLI
+  ansible.builtin.command:
+    argv: [python3, -m, pip, uninstall, --yes, wordfence]
+  environment:
+    PIP_BREAK_SYSTEM_PACKAGES: "1"
+  changed_when: true
+  when: wordfence_pip_check.rc == 0
+  tags: [wordfence]
+
+# Includes the Persistent=true timer stamps systemd keeps after unit removal.
+- name: Find Wordfence leftovers
+  ansible.builtin.find:
+    paths:
+      - /usr/local/bin
+      - /tmp
+      - /var/lib/systemd/timers
+    patterns:
+      - .wordfence-install-*
+      - wordfence_*.tar.gz
+      - wordfence_*.deb
+      - stamp-wordfence-*.timer
+    file_type: any
+    hidden: true
+  register: wordfence_leftovers
+  tags: [wordfence]
+
+- name: Remove Wordfence and AWS CLI files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: >-
+    {{ [
+      '/usr/local/bin/wordfence',
+      '/usr/local/sbin/wordfence-scan-to-s3',
+      '/etc/wordfence',
+      '/etc/logrotate.d/wordfence',
+      '/var/cache/wordfence',
+      '/var/log/wordfence',
+      '/var/lock/wordfence',
+      '/usr/local/bin/aws',
+      '/usr/local/bin/aws_completer',
+      '/usr/local/aws-cli',
+      '/tmp/wordfence-aws-cli',
+      '/tmp/wordfence-aws-cli.zip',
+    ] + (wordfence_leftovers.files | map(attribute='path') | list) }}
+  tags: [wordfence]
+
+- name: Read user accounts
+  ansible.builtin.getent:
+    database: passwd
+  tags: [wordfence]
+
+# Running wordfence without --configuration writes the license to
+# ~/.config/wordfence/wordfence-cli.ini.
+- name: Remove per-user Wordfence configuration and cache
+  ansible.builtin.file:
+    path: "{{ item.0 }}/{{ item.1 }}"
+    state: absent
+  loop: >-
+    {{ ansible_facts.getent_passwd.values() | map(attribute=4)
+    | select('match', '^(/root|/home/[^/]+)$') | unique | sort
+    | product(['.config/wordfence', '.cache/wordfence']) | list }}
+  loop_control:
+    label: "{{ item.0 }}/{{ item.1 }}"
+  tags: [wordfence]
+
+# libpcre3 was installed only for Wordfence, but other packages may need it.
+# Hand it back to APT and remove it only if APT would autoremove it.
+- name: Check whether libpcre3 is marked manually installed
+  ansible.builtin.command: apt-mark showmanual libpcre3
+  register: wordfence_pcre_manual
+  changed_when: false
+  tags: [wordfence]
+
+- name: Mark libpcre3 as automatically installed
+  ansible.builtin.command: apt-mark auto libpcre3
+  when: "'libpcre3' in wordfence_pcre_manual.stdout_lines"
+  changed_when: true
+  tags: [wordfence]
+
+- name: Check whether libpcre3 is still required
+  ansible.builtin.command: apt-get --simulate autoremove  # noqa: command-instead-of-module
+  register: wordfence_autoremove
+  changed_when: false
+  tags: [wordfence]
+
+- name: Remove libpcre3 if nothing else requires it
+  ansible.builtin.apt:
+    name: libpcre3
+    state: absent
+  when: wordfence_autoremove.stdout is search('^Remv libpcre3 ', multiline=true)
+  tags: [wordfence]

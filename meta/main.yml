@@ -4,8 +4,8 @@ galaxy_info:
   role_name: trellis_wordfence
   author: spark451inc
   description: >-
-    Install and schedule Wordfence CLI scans on Trellis-managed AWS EC2
-    servers and upload CSV reports to S3
+    Remove Wordfence CLI, its scheduled scans, and the AWS CLI installed by
+    earlier releases of this role from Trellis-managed servers
   company: Spark451
 
   license: GPL-2.0-or-later
@@ -17,9 +17,6 @@ galaxy_info:
     - security
     - wordfence
     - trellis
-    - malware
-    - scanning
-    - aws
-    - s3
+    - uninstall
 
 dependencies: []
